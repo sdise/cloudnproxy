@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/t5-core", "src-tauri"]
+members = ["crates/t5-core", "crates/t5-daemon", "src-tauri"]
 resolver = "2"
 
 [workspace.package]

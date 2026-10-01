@@ -111,6 +111,12 @@ pub struct Config {
     pub auto_reconnect: bool,
     pub auto_switch: bool,
 
+    // ---- 日志 ----
+    /// 最低输出级别：trace / debug / info / warn / error
+    pub log_level: String,
+    /// 日志文件路径；留空表示不写文件（仅输出到标准输出与图形界面）
+    pub log_file: String,
+
     // ---- 应用行为 ----
     pub autostart: bool,
     pub autostart_connect: bool,
@@ -146,6 +152,9 @@ impl Default for Config {
             tunnel_pool: true,
             auto_reconnect: true,
             auto_switch: false,
+
+            log_level: "info".to_string(),
+            log_file: String::new(),
 
             autostart: false,
             autostart_connect: true,

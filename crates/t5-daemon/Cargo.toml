@@ -1,0 +1,14 @@
+[package]
+name = "t5-daemon"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "CloudNProxy 无 GUI 版本（纯 Rust，不依赖 WebView 与图形环境）"
+
+[[bin]]
+name = "t5d"
+path = "src/main.rs"
+
+[dependencies]
+t5-core = { path = "../t5-core" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "net", "signal"] }

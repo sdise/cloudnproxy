@@ -36,6 +36,7 @@ pub async fn get_status(app: AppHandle, state: State<'_, AppState>) -> Result<St
                 } else {
                     "直连".to_string()
                 },
+                tunnel_pool: 0,
             },
         }
     };
@@ -96,6 +97,7 @@ pub async fn start_proxy(app: AppHandle, state: State<'_, AppState>) -> Result<E
                 addr: String::new(),
                 upstream: String::new(),
                 chain: String::new(),
+                tunnel_pool: 0,
             })
     };
     let _ = app.emit("status-changed", &status);
@@ -279,7 +281,7 @@ pub async fn benchmark_one(
     Ok(res)
 }
 
-/// 切换当前使用的节点；引擎运行中会重启以生效。
+/// 切换当前使用的节点。引擎运行中直接热切换，不中断已有连接。
 #[tauri::command]
 pub async fn set_current_node(
     app: AppHandle,
@@ -288,10 +290,6 @@ pub async fn set_current_node(
     port: Option<u16>,
 ) -> Result<(), String> {
     let addr = format!("{}:{}", ip, port.unwrap_or(443));
-    let was_running = {
-        let guard = state.engine.lock().await;
-        guard.as_ref().map(|h| h.is_running()).unwrap_or(false)
-    };
 
     {
         let mut c = state.cfg.lock().await;
@@ -301,12 +299,22 @@ pub async fn set_current_node(
             .map_err(|e| format!("保存配置失败: {e}"))?;
     }
 
-    if was_running {
-        stop_engine(state.inner()).await;
-        start_engine(state.inner()).await?;
-    }
+    let switched = {
+        let guard = state.engine.lock().await;
+        match guard.as_ref() {
+            Some(h) if h.is_running() => {
+                h.set_upstream(&addr);
+                true
+            }
+            _ => false,
+        }
+    };
 
-    state.logs.info(format!("当前节点已切换为 {addr}"));
+    if switched {
+        state.logs.info(format!("当前节点已热切换为 {addr}"));
+    } else {
+        state.logs.info(format!("当前节点已设置为 {addr}（未运行）"));
+    }
     let _ = app.emit("config-changed", ());
     Ok(())
 }

@@ -10,6 +10,7 @@
 //! - [`engine`]    监听循环与双向转发
 //! - [`resolver`]  DoH 域名解析与 GeoIP 查询
 //! - [`bench`]     节点延迟 / 带宽测速
+//! - [`tunnel_pool`] 上游隧道预建与复用
 
 pub mod bench;
 pub mod config;
@@ -19,6 +20,7 @@ pub mod outbound;
 pub mod resolver;
 pub mod socks5;
 pub mod stats;
+pub mod tunnel_pool;
 
 pub use config::{Config, Node};
 pub use engine::{EngineHandle, EngineStatus};

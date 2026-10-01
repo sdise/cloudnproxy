@@ -8,6 +8,7 @@ mod state;
 mod tray;
 
 use serde::Serialize;
+use std::path::PathBuf;
 use std::time::Duration;
 use tauri::{Emitter, Manager, WindowEvent};
 use tauri_plugin_autostart::MacosLauncher;
@@ -38,11 +39,14 @@ pub fn run() {
         .setup(|app| {
             let handle = app.handle().clone();
 
-            let config_path = handle
-                .path()
-                .app_config_dir()
-                .map(|d| d.join("config.toml"))
-                .unwrap_or_else(|_| std::path::PathBuf::from("config.toml"));
+            // `-f <path>` 可覆盖默认配置路径，与无 GUI 版本保持一致的用法
+            let config_path = arg_config_file().unwrap_or_else(|| {
+                handle
+                    .path()
+                    .app_config_dir()
+                    .map(|d| d.join("config.toml"))
+                    .unwrap_or_else(|_| PathBuf::from("config.toml"))
+            });
 
             let cfg = Config::load_or_default(&config_path);
             let auto_connect = cfg.autostart_connect;
@@ -155,4 +159,25 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("CloudNProxy 启动失败");
+}
+
+/// 解析命令行中的 `-f/--file <path>` / `--file=<path>` / `-f<path>`。
+fn arg_config_file() -> Option<PathBuf> {
+    let mut it = std::env::args().skip(1);
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "-f" | "--file" | "-c" | "--config" => return it.next().map(PathBuf::from),
+            _ => {
+                if let Some(v) = a.strip_prefix("--file=") {
+                    return Some(PathBuf::from(v));
+                }
+                if let Some(v) = a.strip_prefix("-f") {
+                    if !v.is_empty() {
+                        return Some(PathBuf::from(v));
+                    }
+                }
+            }
+        }
+    }
+    None
 }

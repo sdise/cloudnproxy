@@ -482,10 +482,6 @@
 
     $('themeSel').addEventListener('change', () => applyTheme($('themeSel').value));
     $('filterIsp').addEventListener('change', (e) => { S.filterIsp = e.target.value; renderNodes(); });
-    $('sortKey').addEventListener('change', (e) => {
-      S.sort.key = e.target.value === 'latency' ? 'latency' : e.target.value === 'recent' ? 'recent' : 'speed';
-      renderNodes();
-    });
     $('logLevel').addEventListener('change', renderLogs);
     $('logFilter').addEventListener('input', renderLogs);
     $('logFollow').addEventListener('click', (e) => {
