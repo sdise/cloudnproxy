@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CloudNProxy — Tauri v2 UI 原型 v2</title>
+<style>
+:root{
+  --bg:#f3f3f3; --surface:#ffffff; --surface2:#fafafa; --surface3:#f0f0f0;
+  --border:#e0e0e0; --border2:#c8c6c4;
+  --text:#1b1a19; --text2:#444746; --muted:#605e5c;
+  --accent:#0f6cbd; --accentSoft:#e8f1fb;
+  --ok:#0e700e; --okBg:#e7f6e7; --warn:#9a6700; --warnBg:#fdf6e3;
+  --err:#c50f1f; --errBg:#fdeaea;
+  --up:#c239b3; --down:#0f6cbd;
+  --shadow:0 4px 16px rgba(0,0,0,.10), 0 1px 3px rgba(0,0,0,.06);
+  --radius:8px;
+}
+html[data-theme="dark"]{
+  --bg:#202020; --surface:#2b2b2b; --surface2:#313131; --surface3:#383838;
+  --border:#3d3d3d; --border2:#4d4d4d;
+  --text:#f3f2f1; --text2:#d2d0ce; --muted:#a19f9d;
+  --accent:#4cc2ff; --accentSoft:#12304a;
+  --ok:#6bb700; --okBg:#20331c; --warn:#fce100; --warnBg:#3a3410;
+  --err:#ff6b6b; --errBg:#40262a;
+  --up:#e9a6df; --down:#4cc2ff;
+  --shadow:0 4px 20px rgba(0,0,0,.5);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:"Segoe UI Variable Text","Segoe UI",-apple-system,"Microsoft YaHei",system-ui,sans-serif;
+  background:var(--bg);color:var(--text);padding:28px;min-height:100vh;-webkit-font-smoothing:antialiased}
+.hint-bar{max-width:1400px;margin:0 auto 20px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;
+  font-size:13px;color:var(--muted)}
+.hint-bar b{color:var(--text)}
+button.demo{background:var(--surface);color:var(--text);border:1px solid var(--border2);
+  border-radius:6px;padding:6px 12px;font-size:12px;cursor:pointer;font-family:inherit}
+button.demo:hover{background:var(--surface3)}
+.stage{max-width:1400px;margin:0 auto;display:flex;gap:24px;align-items:flex-start;flex-wrap:wrap}
+
+.window{width:1040px;max-width:100%;height:700px;background:var(--surface);
+  border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);
+  display:flex;flex-direction:column;overflow:hidden;flex-shrink:0}
+.titlebar{height:38px;display:flex;align-items:center;padding-left:14px;
+  border-bottom:1px solid var(--border);background:var(--surface2);flex-shrink:0;user-select:none}
+.tb-title{font-size:12px;color:var(--text2);display:flex;align-items:center;gap:8px;flex:1}
+.tb-title svg{width:15px;height:15px}
+.tb-btns{display:flex;height:100%}
+.tb-btns span{width:45px;height:100%;display:grid;place-items:center;font-size:15px;color:var(--text2)}
+.tb-btns span:hover{background:var(--surface3)}
+.tb-btns span.close:hover{background:#c42b1c;color:#fff}
+
+.body{display:flex;flex:1;overflow:hidden}
+.rail{width:196px;flex-shrink:0;border-right:1px solid var(--border);
+  background:var(--surface2);display:flex;flex-direction:column;padding:8px;gap:2px}
+.nav{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:6px;
+  font-size:13.5px;color:var(--text2);cursor:pointer;border-left:3px solid transparent}
+.nav:hover{background:var(--surface3)}
+.nav.active{background:var(--accentSoft);color:var(--accent);border-left-color:var(--accent);font-weight:600}
+.nav .ico{width:18px;text-align:center;font-size:15px}
+.nav .badge{margin-left:auto;font-size:10px;background:var(--accent);color:#fff;border-radius:9px;padding:1px 6px}
+.rail-foot{margin-top:auto;padding:10px 12px 6px;font-size:11px;color:var(--muted);
+  border-top:1px solid var(--border);line-height:1.7}
+.content{flex:1;overflow-y:auto;padding:22px 26px}
+.page{display:none}
+.page.show{display:block;animation:fade .18s ease}
+@keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1}}
+
+
+.card{background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);
+  padding:16px 18px;margin-bottom:16px}
+.card h3{font-size:13px;font-weight:600;margin-bottom:14px;display:flex;align-items:center;gap:8px}
+.card h3 .tag{font-size:10px;color:var(--muted);font-weight:400}
+.row{display:flex;align-items:center;justify-content:space-between;gap:16px;
+  padding:9px 0;border-bottom:1px solid var(--border)}
+.row:last-child{border-bottom:none}
+.row .lbl{font-size:13px}
+.row .desc{font-size:11.5px;color:var(--muted);margin-top:2px;line-height:1.6}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+label.fld{display:block;font-size:12px;color:var(--muted);margin-bottom:5px}
+input,select{width:100%;padding:7px 10px;font-size:13px;font-family:inherit;
+  background:var(--surface);color:var(--text);border:1px solid var(--border2);border-radius:4px;outline:none}
+input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 2px var(--accentSoft)}
+input:disabled{background:var(--surface3);color:var(--muted);cursor:not-allowed}
+
+.btn{padding:7px 14px;font-size:12.5px;font-family:inherit;border-radius:4px;cursor:pointer;
+  border:1px solid var(--border2);background:var(--surface);color:var(--text)}
+.btn:hover{background:var(--surface3)}
+.btn.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+.btn.primary:hover{filter:brightness(1.1)}
+.btn.sm{padding:4px 9px;font-size:11.5px}
+.btn:disabled{background:var(--surface3);color:var(--muted);border-color:var(--border);
+  cursor:not-allowed;opacity:1}
+
+.sw{width:40px;height:20px;border-radius:10px;background:var(--border2);position:relative;
+  cursor:pointer;transition:.18s;flex-shrink:0}
+.sw::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;
+  background:#fff;transition:.18s;box-shadow:0 1px 2px rgba(0,0,0,.3)}
+.sw.on{background:var(--accent)}
+.sw.on::after{left:22px}
+.sw.wide{width:52px;height:26px}
+.sw.wide::after{width:22px;height:22px}
+.sw.wide.on::after{left:28px}
+
+.hero{display:flex;align-items:center;gap:18px;padding:18px 20px;border-radius:var(--radius);
+  background:linear-gradient(120deg,var(--accentSoft),var(--surface2) 70%);
+  border:1px solid var(--border);margin-bottom:16px}
+.hero .info{flex:1}
+.hero .st{font-size:22px;font-weight:600;display:flex;align-items:center;gap:10px}
+.hero .meta{font-size:12px;color:var(--muted);margin-top:6px;line-height:1.8}
+.swbox{display:flex;flex-direction:column;align-items:center;gap:8px;flex-shrink:0}
+.swtip{font-size:11px;color:var(--muted);line-height:1.5;text-align:center;white-space:nowrap}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--ok);flex-shrink:0;box-shadow:0 0 0 3px var(--okBg)}
+.dot.off{background:var(--muted);box-shadow:0 0 0 3px var(--surface3)}
+
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px}
+.stat{background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:13px 15px}
+.stat .k{font-size:11px;color:var(--muted);margin-bottom:5px}
+.stat .v{font-size:19px;font-weight:600;font-variant-numeric:tabular-nums}
+.stat .v small{font-size:11px;font-weight:400;color:var(--muted);margin-left:3px}
+
+.chart{height:150px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px}
+.legend{display:flex;gap:16px;font-size:11px;color:var(--muted);margin-bottom:6px}
+.legend i{display:inline-block;width:9px;height:2px;vertical-align:middle;margin-right:5px}
+.chain{display:flex;align-items:center;gap:0;flex-wrap:wrap;font-size:12px;
+  padding:12px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius)}
+.nodebox{padding:7px 13px;border:1px solid var(--border2);border-radius:6px;background:var(--surface);text-align:center}
+.nodebox b{display:block;font-size:12.5px}
+.nodebox span{font-size:10.5px;color:var(--muted)}
+.nodebox.dashed{border-style:dashed;opacity:.6}
+.arrow{margin:0 9px;color:var(--accent);font-size:15px}
+
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+thead th{text-align:left;padding:8px 8px;font-size:11px;color:var(--muted);font-weight:600;
+  border-bottom:1px solid var(--border2);white-space:nowrap;user-select:none}
+thead th.sortable{cursor:pointer}
+thead th.sortable:hover{color:var(--accent)}
+thead th .ind{font-size:9px;margin-left:3px;opacity:.45}
+thead th.sorted .ind{opacity:1;color:var(--accent)}
+tbody td{padding:8px;border-bottom:1px solid var(--border);white-space:nowrap}
+tbody tr:hover{background:var(--surface3)}
+tbody tr.cur td{background:var(--accentSoft);font-weight:500;
+  border-top:1px solid var(--accent);border-bottom:1px solid var(--accent)}
+tbody tr.cur td:first-child{box-shadow:inset 4px 0 0 var(--accent);border-left:1px solid var(--accent)}
+tbody tr.cur td:last-child{border-right:1px solid var(--accent)}
+tbody tr.cur td.num{color:var(--accent)}
+td.num{font-variant-numeric:tabular-nums}
+
+
+
+.logbox{background:#1a1a1a;color:#d4d4d4;border-radius:var(--radius);padding:12px 14px;
+  height:308px;overflow-y:scroll;font-family:ui-monospace,Consolas,monospace;
+  font-size:11.5px;line-height:1.95;scrollbar-width:thin;scrollbar-color:#4a4a4a #252525}
+.logbox::-webkit-scrollbar{width:11px}
+.logbox::-webkit-scrollbar-track{background:#252525;border-radius:6px}
+.logbox::-webkit-scrollbar-thumb{background:#4a4a4a;border-radius:6px;border:2px solid #252525}
+.logbox::-webkit-scrollbar-thumb:hover{background:#636363}
+.logbox .t{color:#6a9955}
+.logbox .i{color:#569cd6}
+.logbox .w{color:#dcdcaa}
+.logbox .e{color:#f48771}
+
+
+.statusbar{height:30px;border-top:1px solid var(--border);background:var(--surface2);
+  display:flex;align-items:center;gap:18px;padding:0 16px;font-size:11.5px;color:var(--muted);flex-shrink:0}
+.statusbar .r{margin-left:auto}
+.statusbar b{color:var(--text);font-weight:500}
+
+.side{width:280px;display:flex;flex-direction:column;gap:20px;flex-shrink:0}
+.cap{font-size:12px;color:var(--muted);margin-bottom:8px;line-height:1.7}
+.cap b{color:var(--text);font-size:13px}
+.tray{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+  box-shadow:var(--shadow);overflow:hidden}
+.tray .hd{padding:9px 13px;font-size:11.5px;color:var(--muted);border-bottom:1px solid var(--border);background:var(--surface2)}
+.tray .it{padding:9px 13px;font-size:12.5px;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--border)}
+.tray .it:last-child{border-bottom:none}
+.tray .it:hover{background:var(--surface3)}
+.tray .it.dis{color:var(--muted)}
+.tray .sep{height:1px;background:var(--border)}
+.tray .it .r{margin-left:auto;font-size:11px;color:var(--muted)}
+.mini{width:170px;background:var(--surface);border:1px solid var(--border);border-radius:12px;
+  box-shadow:var(--shadow);padding:11px 13px}
+.mini .t{font-size:10.5px;color:var(--muted);margin-bottom:7px;display:flex;justify-content:space-between}
+.mini .sp{font-size:17px;font-weight:600;font-variant-numeric:tabular-nums}
+.mini .sp small{font-size:10px;color:var(--muted);font-weight:400}
+.mini .duo{display:flex;gap:14px;margin-top:3px}
+.mini .mini-bar{height:4px;border-radius:2px;background:var(--surface3);margin-top:9px;overflow:hidden;display:flex}
+.mini .mini-bar i{display:block;height:100%}
+</style>
+</head>
+<body>
+
+<div class="hint-bar">
+  <b>CloudNProxy — Tauri v2 UI 原型 v2</b>
+  <span>5 页结构 · 业务数据零落盘</span>
+  <button class="demo" onclick="toggleTheme()">◐ 切换浅色 / 深色主题</button>
+</div>
+
+<div class="stage">
+  <div class="window">
+    <div class="titlebar">
+      <div class="tb-title">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+          <path d="M12 2 4 6v6c0 5 3.4 9.4 8 10 4.6-.6 8-5 8-10V6z"/><path d="M9 12l2 2 4-4"/>
+        </svg>
+        <span>CloudNProxy</span><span style="color:var(--muted)">— T5 云代理网关</span>
+      </div>
+      <div class="tb-btns"><span>–</span><span>□</span><span class="close">✕</span></div>
+    </div>
+
+    <div class="body">
+      <nav class="rail">
+        <div class="nav active" onclick="go(0,this)"><span class="ico">⌂</span>概览</div>
+        <div class="nav" onclick="go(1,this)"><span class="ico">🌐</span>节点库<span class="badge" id="badge">14</span></div>
+        <div class="nav" onclick="go(2,this)"><span class="ico">🔌</span>连接</div>
+        <div class="nav" onclick="go(3,this)"><span class="ico">📋</span>日志</div>
+        <div class="nav" onclick="go(4,this)"><span class="ico">⚙</span>设置</div>
+        <div class="rail-foot">
+          v1.0 · engine tokio · Tauri v2<br>
+          配置与测速结果已本地保存
+        </div>
+      </nav>
+
+      <div class="content">
+
+        <!-- ① 概览 -->
+        <div class="page show">
+          <div class="hero">
+            <div class="dot"></div>
+            <div class="info">
+              <div class="st">运行中</div>
+              <div class="meta">本地 SOCKS5 <b>127.0.0.1:10801</b> · 当前节点 <b>163.177.17.189:443</b>（广州 联通 → 广州 电信 AS4134）</div>
+            </div>
+            <div class="swbox">
+              <span class="swtip">关闭本窗口后<br>引擎继续常驻</span>
+              <div class="sw wide on"></div>
+            </div>
+          </div>
+          <div class="stats">
+            <div class="stat"><div class="k">上行</div><div class="v">1.24<small>MB/s</small></div></div>
+            <div class="stat"><div class="k">下行</div><div class="v">8.61<small>MB/s</small></div></div>
+            <div class="stat"><div class="k">活动连接</div><div class="v">27</div></div>
+            <div class="stat"><div class="k">本次会话转发</div><div class="v">4.8<small>GB</small></div></div>
+          </div>
+          <div class="chart">
+            <div class="legend">
+              <span><i style="background:var(--down)"></i>下行</span>
+              <span><i style="background:var(--up)"></i>上行</span>
+              <span style="margin-left:auto">最近 60 秒 · 内存环形缓冲</span>
+            </div>
+            <svg viewBox="0 0 900 110" preserveAspectRatio="none" style="width:100%;height:98px">
+              <defs><linearGradient id="gd" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="var(--down)" stop-opacity=".38"/>
+                <stop offset="100%" stop-color="var(--down)" stop-opacity="0"/></linearGradient></defs>
+              <g stroke="var(--border)" stroke-width="1">
+                <line x1="0" y1="27" x2="900" y2="27"/><line x1="0" y1="55" x2="900" y2="55"/>
+                <line x1="0" y1="82" x2="900" y2="82"/><line x1="0" y1="109" x2="900" y2="109"/></g>
+              <path d="M0 95 L60 88 L120 92 L180 60 L240 40 L300 52 L360 22 L420 30 L480 12 L540 34 L600 18 L660 44 L720 28 L780 50 L840 36 L900 58 L900 110 L0 110 Z" fill="url(#gd)"/>
+              <polyline points="0 95 60 88 120 92 180 60 240 40 300 52 360 22 420 30 480 12 540 34 600 18 660 44 720 28 780 50 840 36 900 58" fill="none" stroke="var(--down)" stroke-width="2"/>
+              <polyline points="0 104 60 102 120 104 180 96 240 92 300 98 360 88 420 92 480 86 540 94 600 90 660 96 720 92 780 98 840 94 900 100" fill="none" stroke="var(--up)" stroke-width="2" stroke-dasharray="4 3"/>
+            </svg>
+          </div>
+          <div class="card" style="margin-top:16px">
+            <h3>当前链路 <span class="tag">Chain 未启用，直连节点</span></h3>
+            <div class="chain">
+              <div class="nodebox"><b>本地应用</b><span>SOCKS5 客户端</span></div>
+              <span class="arrow">→</span>
+              <div class="nodebox"><b>127.0.0.1:10801</b><span>SOCKS5 Inbound</span></div>
+              <span class="arrow">→</span>
+              <div class="nodebox" style="border-color:var(--accent)"><b>163.177.17.189:443</b><span>T5 节点 · CONNECT 改写</span></div>
+              <span class="arrow">→</span>
+              <div class="nodebox"><b>目标站点</b><span>任意 TCP</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ② 节点库 -->
+        <div class="page">
+          <div class="card">
+            <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
+              <input id="domainInput" value="cloudnproxy.baidu.com" style="max-width:230px">
+              <button class="btn primary">⟳ 解析域名</button>
+              <button class="btn primary">⚡ 全部测速</button>
+              <button class="btn" disabled>⏹ 停止</button>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
+              <select style="max-width:150px"><option>全部运营商</option><option>电信</option><option>联通</option><option>移动</option></select>
+              <select style="max-width:160px"><option>按速度排序</option><option>按延迟排序</option><option>按最近测速时间</option></select>
+            </div>
+
+            <table>
+              <thead><tr>
+                <th>节点 IP</th><th>归属地</th><th>入口 ISP</th><th>出口 IP</th>
+                <th>出口归属地</th><th>出口 ISP / ASN</th>
+                <th class="sortable sorted" onclick="sortHint(this)">延迟 <span class="ind">▲</span></th>
+                <th class="sortable" onclick="sortHint(this)">速度 <span class="ind">↕</span></th>
+                <th>操作</th>
+              </tr></thead>
+              <tbody>
+                <tr class="cur"><td class="num">163.177.17.189</td><td>广州</td><td>联通</td><td class="num">14.215.185.28</td><td>广州</td><td>电信 · AS4134</td><td class="num">32 ms</td><td class="num">71.7 Mbps</td>
+                  <td style="white-space:nowrap"><button class="btn sm">测速</button> <button class="btn sm" disabled>设为当前</button></td></tr>
+                <tr><td class="num">14.215.182.75</td><td>广州</td><td>电信</td><td class="num">14.215.185.36</td><td>广州</td><td>电信 · AS4134</td><td class="num">28 ms</td><td class="num">127.8 Mbps</td>
+                  <td style="white-space:nowrap"><button class="btn sm">测速</button> <button class="btn sm">设为当前</button></td></tr>
+                <tr><td class="num">183.240.98.84</td><td>广州</td><td>移动</td><td class="num">14.215.185.62</td><td>广州</td><td>电信 · AS4134</td><td class="num">35 ms</td><td class="num">113.4 Mbps</td>
+                  <td style="white-space:nowrap"><button class="btn sm">测速</button> <button class="btn sm">设为当前</button></td></tr>
+                <tr><td class="num">110.242.70.68</td><td>承德</td><td>联通</td><td class="num">157.0.147.149</td><td>苏州</td><td>联通 · AS140717</td><td class="num">61 ms</td><td class="num">54.3 Mbps</td>
+                  <td style="white-space:nowrap"><button class="btn sm">测速</button> <button class="btn sm">设为当前</button></td></tr>
+                <tr><td class="num">220.181.33.174</td><td>北京</td><td>CNISP</td><td class="num">157.0.147.147</td><td>苏州</td><td>联通 · AS140717</td><td class="num">74 ms</td><td class="num">40.9 Mbps</td>
+                  <td style="white-space:nowrap"><button class="btn sm">测速</button> <button class="btn sm">设为当前</button></td></tr>
+                <tr><td class="num">180.101.50.249</td><td>南京</td><td>电信</td><td>—</td><td>—</td><td>— · AS134756</td><td class="num">超时</td><td class="num">0</td>
+                  <td style="white-space:nowrap"><button class="btn sm">测速</button> <button class="btn sm">设为当前</button></td></tr>
+                <tr><td class="num">220.181.111.189</td><td>北京</td><td>CNISP</td><td>—</td><td>—</td><td>—</td><td class="num">拒绝</td><td class="num">0</td>
+                  <td style="white-space:nowrap"><button class="btn sm">测速</button> <button class="btn sm">设为当前</button></td></tr>
+              </tbody>
+            </table>
+            <div style="font-size:11.5px;color:var(--muted);margin-top:12px">
+              共 14 个节点 · 9 个可用 · 上次解析 2 分钟前 · 测速结果已本地保存
+            </div>
+          </div>
+        </div>
+
+        <!-- ③ 连接 -->
+        <div class="page">
+          <div class="card">
+            <h3>基本</h3>
+            <div class="grid2">
+              <div><label class="fld">监听地址</label><input value="127.0.0.1"></div>
+              <div><label class="fld">监听端口</label><input value="10801"></div>
+            </div>
+            <div class="row" style="margin-top:8px">
+              <div><div class="lbl">允许局域网设备接入</div><div class="desc">开启后监听 0.0.0.0</div></div>
+              <div class="sw"></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>上游 T5 节点</h3>
+            <div class="grid2">
+              <div><label class="fld">当前节点（从节点库选择）</label>
+                <select><option selected>163.177.17.189:443</option>
+                  <option>14.215.182.75:443</option><option>183.240.98.84:443</option>
+                  <option>＋ 在节点库中点「设为当前」…</option></select></div>
+              <div><label class="fld">鉴权域名 FakeHost</label><input value="cloudnproxy.baidu.com"></div>
+              <div><label class="fld">凭证 T5Auth</label><input type="password" value="1050504963"></div>
+              <div><label class="fld">最大并发连接</label><input value="512"></div>
+            </div>
+            <div class="row" style="margin-top:10px">
+              <div><div class="lbl">启用一级代理 Chain</div>
+                <div class="desc">默认<b>不启用</b>，即本机直连 T5 节点；仅在无法直连时才手动打开</div></div>
+              <div class="sw" id="chainSw" onmouseenter="" ></div>
+            </div>
+            <div class="grid2" style="margin-top:10px">
+              <div><label class="fld">Chain 地址 <span style="color:var(--muted)">（未启用）</span></label>
+                <input id="chainAddr" value="host:port" disabled></div>
+              <div><label class="fld">连接超时</label><input value="10 秒"></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>高级 <span class="tag">转发性能</span></h3>
+            <div class="row"><div><div class="lbl">TCP_NODELAY</div><div class="desc">关闭 Nagle，降低交互延迟</div></div><div class="sw on"></div></div>
+            <div class="row"><div><div class="lbl">Linux splice(2) 零拷贝</div><div class="desc">明文隧道可用；仅 Linux 生效</div></div><div class="sw on"></div></div>
+            <div class="row"><div><div class="lbl">按目标闲置隧道复用</div><div class="desc">短连接密集场景省去重复 CONNECT 握手</div></div><div class="sw on"></div></div>
+            <div class="row"><div><div class="lbl">断线自动重连</div><div class="desc">指数退避 1s → 30s 封顶</div></div><div class="sw on"></div></div>
+            <div class="row"><div><div class="lbl">自动切换到最优节点</div><div class="desc">连续 3 次失败时切到当前评分最高节点</div></div><div class="sw"></div></div>
+          </div>
+
+          <div style="display:flex;gap:10px">
+            <button class="btn primary">应用到当前会话</button>
+            <button class="btn">恢复默认值</button>
+          </div>
+        </div>
+
+        <!-- ④ 日志 -->
+        <div class="page">
+          <div class="card">
+            <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
+              <select id="logLevel" style="max-width:126px">
+                <option>INFO</option><option>DEBUG</option><option>TRACE</option>
+                <option>WARN</option><option>ERROR</option></select>
+              <span style="font-size:11.5px;color:var(--muted)">日志级别</span>
+              <input placeholder="🔍 过滤关键字" style="max-width:200px">
+              <div class="sw on" title="实时跟随"></div><span style="font-size:12px;color:var(--muted)">实时跟随</span>
+              <button class="btn" style="margin-left:auto">暂停</button>
+              <button class="btn" onclick="this.closest('.card').querySelector('.logbox').innerHTML=''">清空显示</button>
+            </div>
+            <div class="logbox">
+<div><span class="t">14:02:11</span> <span class="i">INFO</span>  resolve cloudnproxy.baidu.com via 3 DoH sources → 14 IPs (412ms)</div>
+<div><span class="t">14:02:11</span> <span class="i">INFO</span>  engine started, listening on 127.0.0.1:10801</div>
+<div><span class="t">14:02:11</span> <span class="i">INFO</span>  upstream=163.177.17.189:443 chain=&lt;none, direct&gt;</div>
+<div><span class="t">14:02:11</span> <span class="i">INFO</span>  injected header Host=cloudnproxy.baidu.com</div>
+<div><span class="t">14:02:18</span> <span class="i">INFO</span>  CONNECT speed.cloudflare.com:443 → OK (24ms)</div>
+<div><span class="t">14:02:18</span> <span class="i">INFO</span>  CONNECT api.ip.sb:443 → OK (31ms)</div>
+<div><span class="t">14:02:44</span> <span class="w">WARN</span>  upstream idle 30s, keepalive probe sent</div>
+<div><span class="t">14:03:02</span> <span class="e">ERROR</span> CONNECT www.gstatic.com:443 → DENIED (HTTP/1.1 403)</div>
+<div><span class="t">14:03:02</span> <span class="w">WARN</span>  target may not be allowed by node ACL</div>
+<div><span class="t">14:03:15</span> <span class="i">INFO</span>  stats: conn=27 up=1.24MB/s down=8.61MB/s</div>
+<div><span class="t">14:03:20</span> <span class="i">INFO</span>  benchmark node 14.215.182.75 → 127.8 Mbps, rtt 28ms</div>
+<div><span class="t">14:03:26</span> <span class="i">INFO</span>  CONNECT cdn.jsdelivr.net:443 → OK (46ms)</div>
+<div><span class="t">14:03:31</span> <span class="i">INFO</span>  CONNECT github.com:443 → OK (58ms)</div>
+<div><span class="t">14:03:39</span> <span class="w">WARN</span>  tunnel pool hit rate 12%, reuse limited</div>
+<div><span class="t">14:03:47</span> <span class="i">INFO</span>  CONNECT registry.npmjs.org:443 → OK (71ms)</div>
+<div><span class="t">14:03:55</span> <span class="i">INFO</span>  stats: conn=29 up=0.86MB/s down=6.32MB/s</div>
+<div><span class="t">14:04:02</span> <span class="i">INFO</span>  CONNECT raw.githubusercontent.com:443 → OK (63ms)</div>
+<div><span class="t">14:04:09</span> <span class="e">ERROR</span> CONNECT www.google.com:443 → DENIED (HTTP/1.1 403)</div>
+<div><span class="t">14:04:15</span> <span class="i">INFO</span>  autoswitch candidate 14.215.182.75 not adopted (manual mode)</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ⑤ 设置 -->
+        <div class="page">
+          <div class="card">
+            <h3>启动与自启</h3>
+            <div class="row"><div><div class="lbl">开机自动启动</div>
+              <div class="desc">Windows 写入 HKCU 注册表 Run 值 · Linux 需写 <code>~/.config/systemd/user/t5proxy.service</code><br>
+              <span style="color:var(--warn)">注意：这是系统注册行为，属于唯一不可避免的磁盘写入</span></div></div><div class="sw on"></div></div>
+            <div class="row"><div><div class="lbl">开机后立即建立代理</div><div class="desc">自启时直接进入运行态</div></div><div class="sw on"></div></div>
+            <div class="row"><div><div class="lbl">以最小化方式启动</div><div class="desc">仅显示托盘图标，不弹主窗口</div></div><div class="sw on"></div></div>
+            <div class="row"><div><div class="lbl">仅允许单实例</div><div class="desc">内存中互斥，不再依赖 PID 文件</div></div><div class="sw on"></div></div>
+          </div>
+
+          <div class="card">
+            <h3>关闭行为</h3>
+            <div class="row"><div><div class="lbl">点击 ✕ 关闭时</div><div class="desc">隐藏到托盘并<b>保持引擎运行</b></div></div>
+              <select style="max-width:170px"><option>最小化到托盘</option><option>询问</option><option>退出并停止代理</option></select></div>
+            <div class="row"><div><div class="lbl">显示桌面悬浮窗</div><div class="desc">实时速率，可拖动</div></div><div class="sw"></div></div>
+          </div>
+
+          <div class="card">
+            <h3>外观</h3>
+            <div class="row"><div><div class="lbl">主题</div></div>
+              <select style="max-width:170px"><option>跟随系统</option><option>浅色</option><option>深色</option></select></div>
+            <div class="row"><div><div class="lbl">窗口效果</div><div class="desc">Windows 11 Mica / Linux 背景跟随</div></div><div class="sw on"></div></div>
+          </div>
+
+          <div class="card">
+            <h3>存储</h3>
+            <div class="row"><div><div class="lbl">配置文件</div>
+              <div class="desc">%APPDATA%\cloudnproxy\config.toml　·　~/.config/cloudnproxy/config.toml</div></div>
+              <button class="btn sm">打开目录</button></div>
+            <div class="row"><div><div class="lbl">重置全部数据</div>
+              <div class="desc">清除配置文件与已保存的测速结果</div></div>
+              <button class="btn sm">重置…</button></div>
+          </div>
+
+          <div class="card">
+            <h3>关于</h3>
+            <div class="row"><div><div class="lbl">当前版本</div><div class="desc">v1.0 · tokio engine · Tauri v2</div></div>
+              <button class="btn sm">检查更新</button></div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <div class="statusbar">
+      <span><span class="dot" style="display:inline-block;vertical-align:middle;margin-right:5px"></span><b>运行中</b></span>
+      <span>延迟 <b>32 ms</b></span><span>连接 <b>27</b></span><span>会话 <b>4.8 GB</b></span>
+      <span class="r">节点 163.177.17.189 · 直连 · 已运行 3 小时 12 分</span>
+    </div>
+  </div>
+
+  <!-- 侧边演示 -->
+  <div class="side">
+    <div>
+      <div class="cap"><b>托盘右键菜单</b><br>窗口隐藏时的唯一常驻入口</div>
+      <div class="tray">
+        <div class="hd">CloudNProxy — 运行中</div>
+        <div class="it">🖥 显示主窗口</div>
+        <div class="it">⏸ 暂停代理（保持监听）</div>
+        <div class="sep"></div>
+        <div class="it">⚡ 当前节点：163.177.17.189 <span class="r">切换 ›</span></div>
+        <div class="it">🏆 测速并自动选优</div>
+        <div class="sep"></div>
+        <div class="it">📋 复制 SOCKS5 地址</div>
+        <div class="sep"></div>
+        <div class="it">❌ 退出并停止代理</div>
+      </div>
+    </div>
+    <div>
+      <div class="cap"><b>桌面悬浮窗（可选）</b></div>
+      <div class="mini">
+        <div class="t"><span>CNP · 直连</span><span>⚙</span></div>
+        <div class="sp">8.61<small> MB/s ↓</small></div>
+        <div class="duo">
+          <div><span style="font-size:10px;color:var(--muted)">↑</span> <b style="font-size:12px">1.24</b></div>
+          <div><span style="font-size:10px;color:var(--muted)">conn</span> <b style="font-size:12px">27</b></div>
+          <div><span style="font-size:10px;color:var(--muted)">rtt</span> <b style="font-size:12px">32ms</b></div>
+        </div>
+        <div class="mini-bar"><i style="width:72%;background:var(--down)"></i><i style="width:18%;background:var(--up)"></i></div>
+      </div>
+    </div>
+    <div>
+      <div class="cap"><b>本次改动</b></div>
+      <div class="tray">
+        <div class="it">配置与测速结果<span class="r">已持久化</span></div>
+        <div class="it">域名输入框<span class="r">可编辑</span></div>
+        <div class="it">状态 / 评分列<span class="r">已移除</span></div>
+        <div class="it">当前节点<span class="r">高亮描边</span></div>
+        <div class="it">日志窗口<span class="r">滚动条</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function go(i, el){
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('show'));
+  document.querySelectorAll('.page')[i].classList.add('show');
+  document.querySelectorAll('.nav').forEach(n=>n.classList.remove('active'));
+  el.classList.add('active');
+  document.querySelector('.content').scrollTop = 0;
+}
+function toggleTheme(){
+  const h=document.documentElement;
+  h.setAttribute('data-theme', h.getAttribute('data-theme')==='dark' ? 'light' : 'dark');
+}
+document.querySelectorAll('.sw').forEach(s=>s.addEventListener('click',()=>{
+  s.classList.toggle('on');
+  if(s.id==='chainSw'){
+    const a=document.getElementById('chainAddr');
+    a.disabled = !s.classList.contains('on');
+    if(s.classList.contains('on')){ a.placeholder='10.0.0.200:80'; a.value='10.0.0.200:80'; }
+    else { a.value='host:port'; }
+  }
+}));
+function sortHint(th){
+  const ind=th.querySelector('.ind');
+  const asc=ind.textContent.includes('▲');
+  document.querySelectorAll('thead th.sorted').forEach(x=>{
+    if(x!==th) x.classList.remove('sorted'), x.querySelector('.ind').textContent='↕';
+  });
+  th.classList.add('sorted');
+  ind.textContent = asc ? '▼' : '▲';
+}
+</script>
+</body>
+</html>

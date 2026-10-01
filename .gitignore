@@ -1,0 +1,27 @@
+# Rust
+/target
+**/target/
+**/*.rs.bk
+Cargo.lock.orig
+
+# Tauri 生成的图标（由 CI 用 `tauri icon` 从 icon-source.png 生成，不入库）
+/src-tauri/icons/
+
+# 前端
+node_modules/
+dist/
+
+# 编辑器 / IDE
+.vscode/
+.idea/
+.codeartsdoer/
+*.swp
+*~
+
+# 系统
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 运行期产物
+*.log

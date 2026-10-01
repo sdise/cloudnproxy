@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="system">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CloudNProxy</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="app">
+
+  <!-- 标题栏 -->
+  <header class="titlebar">
+    <div class="tb-title">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+        <path d="M12 2 4 6v6c0 5 3.4 9.4 8 10 4.6-.6 8-5 8-10V6z"/><path d="M9 12l2 2 4-4"/>
+      </svg>
+      <span>CloudNProxy</span>
+      <span class="dim">— T5 云代理网关</span>
+    </div>
+    <div class="tb-stat"><span id="tbState" class="pill mut">已停止</span></div>
+  </header>
+
+  <div class="body">
+
+    <!-- 导航 -->
+    <nav class="rail">
+      <div class="nav active" data-page="overview"><span class="ico">⌂</span>概览</div>
+      <div class="nav" data-page="nodes"><span class="ico">🌐</span>节点库<span class="badge" id="navNodeCount">0</span></div>
+      <div class="nav" data-page="conn"><span class="ico">🔌</span>连接</div>
+      <div class="nav" data-page="logs"><span class="ico">📋</span>日志</div>
+      <div class="nav" data-page="settings"><span class="ico">⚙</span>设置</div>
+      <div class="rail-foot">
+        <span id="verText">v1.0.0</span><br>
+        <span id="cfgPathText" class="dim">配置文件加载中…</span>
+      </div>
+    </nav>
+
+    <!-- 内容 -->
+    <main class="content">
+
+      <!-- 概览 -->
+      <section class="page show" id="page-overview">
+        <div class="hero">
+          <div class="dot off" id="heroDot"></div>
+          <div class="info">
+            <div class="st" id="heroState">已停止</div>
+            <div class="meta" id="heroMeta">本地 SOCKS5 未运行</div>
+          </div>
+          <div class="swbox">
+            <span class="swtip">关闭本窗口后<br>引擎继续常驻</span>
+            <div class="sw wide" id="powerSw"></div>
+          </div>
+        </div>
+
+        <div class="stats">
+          <div class="stat"><div class="k">上行</div><div class="v" id="stUp">0<small>KB/s</small></div></div>
+          <div class="stat"><div class="k">下行</div><div class="v" id="stDown">0<small>KB/s</small></div></div>
+          <div class="stat"><div class="k">活动连接</div><div class="v" id="stConns">0</div></div>
+          <div class="stat"><div class="k">本次会话转发</div><div class="v" id="stTotal">0<small>MB</small></div></div>
+        </div>
+
+        <div class="chart">
+          <div class="legend">
+            <span><i class="lg-down"></i>下行</span>
+            <span><i class="lg-up"></i>上行</span>
+            <span class="right" id="chartHint">最近 60 秒</span>
+          </div>
+          <canvas id="chart" height="150"></canvas>
+        </div>
+
+        <div class="card">
+          <h3>当前链路</h3>
+          <div class="chain">
+            <div class="nodebox"><b>本地应用</b><span>SOCKS5 客户端</span></div>
+            <span class="arrow">→</span>
+            <div class="nodebox"><b id="chainLocal">127.0.0.1:10801</b><span>SOCKS5 Inbound</span></div>
+            <span class="arrow" id="chainArrow">→</span>
+            <div class="nodebox" id="chainBox"><b id="chainNode">—</b><span>T5 节点</span></div>
+            <span class="arrow">→</span>
+            <div class="nodebox"><b>目标站点</b><span>任意 TCP</span></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 节点库 -->
+      <section class="page" id="page-nodes">
+        <div class="card">
+          <div class="toolbar">
+            <input id="domainInput" class="grow" placeholder="cloudnproxy.baidu.com">
+            <button class="btn primary" id="btnResolve">⟳ 解析域名</button>
+            <button class="btn primary" id="btnBenchAll">⚡ 全部测速</button>
+            <button class="btn" id="btnBenchStop" disabled>⏹ 停止</button>
+          </div>
+          <div class="toolbar">
+            <select id="filterIsp">
+              <option value="">全部运营商</option>
+              <option value="电信">电信</option>
+              <option value="联通">联通</option>
+              <option value="移动">移动</option>
+            </select>
+            <select id="sortKey">
+              <option value="speed">按速度排序</option>
+              <option value="latency">按延迟排序</option>
+              <option value="recent">按最近测速时间</option>
+            </select>
+          </div>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>节点 IP</th><th>归属地</th><th>入口 ISP</th><th>出口 IP</th>
+                  <th>出口归属地</th><th>出口 ISP / ASN</th>
+                  <th class="sortable" data-sort="latency">延迟 <span class="ind">↕</span></th>
+                  <th class="sortable" data-sort="speed">速度 <span class="ind">↕</span></th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="nodeBody"></tbody>
+            </table>
+          </div>
+          <div class="dim foot" id="nodeFoot">尚未解析节点</div>
+        </div>
+      </section>
+
+      <!-- 连接 -->
+      <section class="page" id="page-conn">
+        <div class="card">
+          <h3>基本</h3>
+          <div class="grid2">
+            <div><label class="fld">监听地址</label><input data-bind="listen_host"></div>
+            <div><label class="fld">监听端口</label><input type="number" data-bind="listen_port"></div>
+          </div>
+          <div class="row">
+            <div><div class="lbl">允许局域网设备接入</div><div class="desc">开启后监听 0.0.0.0</div></div>
+            <div class="sw" data-bind="allow_lan"></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>上游 T5 节点</h3>
+          <div class="grid2">
+            <div><label class="fld">当前节点</label><input id="currentNode" data-bind="current_node" readonly></div>
+            <div><label class="fld">鉴权域名 FakeHost</label><input data-bind="fake_host"></div>
+            <div><label class="fld">凭证 T5Auth</label><input type="password" data-bind="t5_auth"></div>
+            <div><label class="fld">最大并发连接（0 = 不限）</label><input type="number" data-bind="max_conns"></div>
+          </div>
+          <div class="row">
+            <div><div class="lbl">启用一级代理 Chain</div>
+              <div class="desc">默认不启用，即本机直连 T5 节点</div></div>
+            <div class="sw" data-bind="chain_enabled"></div>
+          </div>
+          <div class="grid2">
+            <div><label class="fld">Chain 地址</label><input id="chainAddr" data-bind="chain_addr" placeholder="host:port"></div>
+            <div><label class="fld">连接超时（毫秒）</label><input type="number" data-bind="connect_timeout_ms"></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>转发行为</h3>
+          <div class="row"><div><div class="lbl">TCP_NODELAY</div><div class="desc">关闭 Nagle，降低交互延迟</div></div><div class="sw" data-bind="tcp_nodelay"></div></div>
+          <div class="row"><div><div class="lbl">按目标闲置隧道复用</div><div class="desc">预留开关，当前版本尚未生效</div></div><div class="sw" data-bind="tunnel_pool"></div></div>
+          <div class="row"><div><div class="lbl">断线自动重连</div><div class="desc">预留开关，当前版本尚未生效</div></div><div class="sw" data-bind="auto_reconnect"></div></div>
+          <div class="row"><div><div class="lbl">自动切换到最优节点</div><div class="desc">预留开关，当前版本尚未生效</div></div><div class="sw" data-bind="auto_switch"></div></div>
+        </div>
+
+        <div class="actions">
+          <button class="btn primary" id="btnApply">应用到当前会话</button>
+          <button class="btn" id="btnRevert">恢复为已保存配置</button>
+        </div>
+      </section>
+
+      <!-- 日志 -->
+      <section class="page" id="page-logs">
+        <div class="card">
+          <div class="toolbar">
+            <select id="logLevel">
+              <option>TRACE</option><option>DEBUG</option>
+              <option selected>INFO</option><option>WARN</option><option>ERROR</option>
+            </select>
+            <span class="dim">日志级别</span>
+            <input id="logFilter" placeholder="🔍 过滤关键字">
+            <div class="sw on" id="logFollow"></div><span class="dim">实时跟随</span>
+            <button class="btn right" id="btnClearLogs">清空显示</button>
+          </div>
+          <div class="logbox" id="logBox"></div>
+        </div>
+      </section>
+
+      <!-- 设置 -->
+      <section class="page" id="page-settings">
+        <div class="card">
+          <h3>启动与自启</h3>
+          <div class="row"><div><div class="lbl">开机自动启动</div>
+            <div class="desc">Windows 写入注册表 Run 值 · Linux 写入 ~/.config/autostart</div></div>
+            <div class="sw" id="swAutostart"></div></div>
+          <div class="row"><div><div class="lbl">开机后立即建立代理</div><div class="desc">自启时直接进入运行态</div></div><div class="sw" data-bind="autostart_connect"></div></div>
+          <div class="row"><div><div class="lbl">以最小化方式启动</div><div class="desc">仅显示托盘图标，不弹主窗口</div></div><div class="sw" data-bind="start_minimized"></div></div>
+          <div class="row"><div><div class="lbl">关闭窗口时最小化到托盘</div><div class="desc">关闭则保持引擎运行</div></div><div class="sw" data-bind="close_to_tray"></div></div>
+        </div>
+
+        <div class="card">
+          <h3>外观</h3>
+          <div class="row"><div><div class="lbl">主题</div></div>
+            <select id="themeSel" style="max-width:170px">
+              <option value="system">跟随系统</option>
+              <option value="light">浅色</option>
+              <option value="dark">深色</option>
+            </select></div>
+        </div>
+
+        <div class="card">
+          <h3>存储</h3>
+          <div class="row"><div><div class="lbl">配置文件</div><div class="desc" id="cfgPathRow">—</div></div>
+            <button class="btn sm" id="btnOpenDir">打开目录</button></div>
+          <div class="row"><div><div class="lbl">重置全部数据</div><div class="desc">清除配置文件与已保存的测速结果</div></div>
+            <button class="btn sm" id="btnReset">重置…</button></div>
+        </div>
+
+        <div class="card">
+          <h3>关于</h3>
+          <div class="row"><div><div class="lbl">当前版本</div><div class="desc" id="aboutVer">—</div></div></div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- 状态栏 -->
+  <footer class="statusbar">
+    <span><span class="dot off" id="sbDot"></span><b id="sbState">已停止</b></span>
+    <span>连接 <b id="sbConns">0</b></span>
+    <span>会话 <b id="sbTotal">0 MB</b></span>
+    <span class="right" id="sbNode">节点 —</span>
+  </footer>
+
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
