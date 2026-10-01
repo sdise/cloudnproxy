@@ -255,8 +255,14 @@ mod tests {
     #[test]
     fn formats_known_timestamp() {
         // 2026-10-02 03:04:05 UTC
-        let ms = 1_790_895_845_000u64;
+        let ms = 1_790_910_245_000u64;
         assert_eq!(iso_time(ms), "2026-10-02 03:04:05");
+    }
+
+    #[test]
+    fn formats_leap_day() {
+        // 2024-02-29 12:00:00 UTC
+        assert_eq!(iso_time(1_709_208_000_000u64), "2024-02-29 12:00:00");
     }
 
     #[test]
