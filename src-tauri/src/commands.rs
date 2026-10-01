@@ -6,7 +6,7 @@ use crate::state::{start_engine, stop_engine, AppState};
 use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_autostart::ManagerExt;
 use t5_core::{bench::BenchResult, logbuf, Config, EngineStatus, LogLine, Node};
 

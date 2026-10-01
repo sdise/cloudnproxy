@@ -16,7 +16,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Duration;
-use t5_core::logbuf::{iso_time, level_code, level_name, LogLine, LogSink};
+use t5_core::logbuf::{iso_time, level_name, LogLine, LogSink};
 use t5_core::{config::Config, Stats};
 
 /// 与 Tauri 版共用同一配置目录，避免两个版本各存一份。
@@ -296,7 +296,7 @@ mod tests {
     #[test]
     fn level_names_round_trip() {
         for name in ["trace", "debug", "info", "warn", "error"] {
-            let code = level_code(name);
+            let code = t5_core::logbuf::level_code(name);
             assert_eq!(level_name(code).to_lowercase(), name);
         }
     }

@@ -38,6 +38,20 @@ jobs:
       - name: 无 GUI 版本单元测试
         run: cargo test -p t5-daemon
 
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: 安装 Tauri CLI
+        run: npm install -g "@tauri-apps/cli@^2"
+
+      # generate_context!() 在编译期就要读取图标，所以类型检查前必须先产出
+      - name: 生成图标
+        run: |
+          node scripts/gen-icon.js icon-source.png
+          tauri icon icon-source.png -o src-tauri/icons
+
       - name: 全量类型检查
         run: cargo check --workspace --all-targets
 
