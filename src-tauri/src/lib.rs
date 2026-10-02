@@ -97,8 +97,11 @@ pub fn run() {
                 }
             }
 
-            // 每秒推送一次统计（无订阅者时自动静默）
-            ctrl.spawn_stats_ticker();
+            // 每秒推送一次统计（无订阅者时自动静默）。
+            //
+            // 必须经 Tauri 的运行时来 spawn：`setup` 回调跑在主线程的同步上下文，
+            // 那里没有 Tokio reactor，直接 `tokio::spawn` 会 panic。
+            tauri::async_runtime::spawn(ctrl.stats_ticker());
 
             // 自启时自动建立代理
             if auto_connect {

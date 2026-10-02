@@ -198,6 +198,15 @@ jobs:
 
           echo "Web 控制台认证与鉴权流程全部通过"
 
+          echo "=========== SSE 实时推送 ==========="
+          # 前端速率图依赖 stats 事件；daemon 若忘记启动推送循环，这里会暴露出来
+          if timeout 6 curl -sN -H "Authorization: Bearer $TOKEN2" "$BASE/api/events" | grep -m1 -o '"type":"stats"' >/dev/null; then
+            echo "已在 SSE 流中收到 stats 事件"
+          else
+            echo "::error::6 秒内未收到 stats 事件，统计推送未工作"
+            exit 1
+          fi
+
           echo "=========== 优雅停止 ==========="
           kill -TERM "$(cat /tmp/cnp/t5d.pid)" 2>/dev/null || true
           sleep 2
@@ -219,9 +228,94 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  # 桌面版必须单独验证：GUI 层的崩溃不会影响 t5d，也不会被上面的冒烟测试
+  # 覆盖。0.2.0 就是这样带着「启动即闪退」发布出去的 —— 根因是 Tauri 的同步
+  # setup 回调里调用了 tokio::spawn（那里没有 Tokio 运行时）。
+  gui-smoke:
+    name: 图形界面版本启动测试
+    needs: check
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: 安装 Linux 依赖与虚拟显示
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
+            patchelf libssl-dev libgtk-3-dev build-essential \
+            xvfb dbus-x11
+
+      - name: 安装 Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust 缓存
+        uses: Swatinem/rust-cache@v2
+
+      - name: 安装 Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 20
+
+      - name: 安装 Tauri CLI
+        run: npm install -g "@tauri-apps/cli@^2"
+
+      - name: 生成图标
+        run: |
+          node scripts/gen-icon.js icon-source.png
+          tauri icon icon-source.png -o src-tauri/icons
+
+      # 用 debug 构建：编译更快，且保留了完整输出，崩溃时能直接看到原因
+      - name: 构建图形界面版
+        run: cargo build -p cloudnproxy
+
+      - name: 在虚拟显示下启动并观察
+        run: |
+          mkdir -p /tmp/gui
+          # Xvfb 没有 GPU，关掉 WebKit 的合成与 dmabuf 渲染以免误判
+          WEBKIT_DISABLE_COMPOSITING_MODE=1 WEBKIT_DISABLE_DMABUF_RENDERER=1 \
+            xvfb-run -a dbus-run-session -- ./target/debug/cloudnproxy > /tmp/gui/app.log 2>&1 &
+          PID=$!
+          echo "已启动（PID $PID），观察 20 秒…"
+
+          for i in $(seq 1 20); do
+            if ! kill -0 "$PID" 2>/dev/null; then
+              echo "::error::图形界面版在 ${i} 秒内退出，疑似启动即崩溃"
+              echo "----------- 程序输出 -----------"
+              cat /tmp/gui/app.log
+              exit 1
+            fi
+            sleep 1
+          done
+
+          echo "进程已存活 20 秒"
+          echo "----------- 程序输出 -----------"
+          cat /tmp/gui/app.log
+
+          echo "----------- 引擎自动就绪检查 -----------"
+          if (ss -ltn 2>/dev/null || netstat -ltn) | grep -q 10801; then
+            echo "SOCKS5 已在 10801 监听（autostart_connect 生效）"
+          else
+            echo "::warning::10801 未监听，引擎可能未自动启动"
+          fi
+
+          kill -TERM "$PID" 2>/dev/null || true
+          sleep 2
+          kill -9 "$PID" 2>/dev/null || true
+          echo "图形界面版启动测试通过"
+
+      - name: 上传日志
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: gui-smoke-logs
+          path: /tmp/gui/*.log
+          if-no-files-found: ignore
+          retention-days: 14
+
   build:
     name: 构建 ${{ matrix.name }}
-    needs: [check, smoke]
+    needs: [check, smoke, gui-smoke]
     strategy:
       fail-fast: false
       matrix:

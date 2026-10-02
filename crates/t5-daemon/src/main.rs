@@ -227,6 +227,9 @@ async fn main() -> ExitCode {
 
     let mut bg_tasks: Vec<tokio::task::JoinHandle<()>> = Vec::new();
 
+    // 每秒一次的统计推送。Web 控制台的实时速率图依赖它，没有订阅者时静默。
+    bg_tasks.push(tokio::spawn(ctrl.stats_ticker()));
+
     // 日志：事件总线 → 标准输出
     {
         let mut rx = events.subscribe();

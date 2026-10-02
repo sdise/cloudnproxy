@@ -512,11 +512,16 @@ impl Controller {
 
     // ---------------- 推送 ----------------
 
-    /// 启动每秒一次统计推送的后台任务。没有订阅者时不产生任何事件。
-    pub fn spawn_stats_ticker(&self) -> tokio::task::JoinHandle<()> {
+    /// 每秒一次统计推送的循环体，没有订阅者时不产生任何事件。
+    ///
+    /// 刻意**不自己 spawn**：调用方可能位于非 Tokio 上下文（Tauri 的同步
+    /// `setup` 回调就是如此），在那里调用 `tokio::spawn` 会直接 panic，而
+    /// release 的 `panic = "abort"` 会让它变成一声不响的闪退。因此由调用方
+    /// 挑一个合适的运行时来执行这个 future。
+    pub fn stats_ticker(&self) -> impl std::future::Future<Output = ()> + Send + 'static {
         let stats = self.stats.clone();
         let events = self.events.clone();
-        tokio::spawn(async move {
+        async move {
             let mut last = stats.snapshot();
             loop {
                 tokio::time::sleep(Duration::from_secs(1)).await;
@@ -527,6 +532,6 @@ impl Controller {
                     events.publish(Event::Stats(tick));
                 }
             }
-        })
+        }
     }
 }
