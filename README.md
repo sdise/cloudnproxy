@@ -174,7 +174,7 @@ latency_ms = 28
 | `CloudNProxy_x.y.z_amd64.AppImage` | Linux | ~78 MB | 便携版。把 WebKit / GTK 整套运行时打包进文件，拷到任意发行版直接运行，无需安装任何依赖 |
 | `cloudnproxy` | Linux | ~6.2 MB | 图形界面版裸二进制（要求系统已装 `libwebkit2gtk-4.1-0`） |
 | `t5d` | Linux | ~2.4 MB | 无 GUI 版裸二进制，**动态链接 glibc** |
-| `t5d-musl` | Linux | ~3 MB | 无 GUI 版**静态链接**，零动态依赖 |
+| `t5d-musl` | Linux | ~2.5 MB | 无 GUI 版**静态链接**，零动态依赖 |
 
 ### 怎么选
 
@@ -192,7 +192,8 @@ latency_ms = 28
 
 | | `t5d`（动态链接 gnu/glibc） | `t5d-musl`（静态链接 musl） |
 |---|---|---|
-| `ldd` 结果 | 列出 `libc.so.6` 等一串依赖 | `not a dynamic executable` |
+| 体积 | 2.38 MB | 2.50 MB |
+| `ldd` 结果 | 列出 `libc.so.6` 等一串依赖 | `statically linked`（`static-pie`） |
 | 能否跑在 Alpine / BusyBox | ✗（musl 与 glibc 不兼容） | ✓ |
 | 能否跑在老发行版（CentOS 7 等） | ✗ 常报 `GLIBC_2.xx not found` | ✓ |
 | DNS 行为 | 走 glibc NSS，查找链完整 | musl 自带 resolver，只读 `/etc/resolv.conf`（本项目节点解析以 DoH 为主，影响可忽略） |
