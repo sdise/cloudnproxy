@@ -555,7 +555,9 @@ cloudnproxy/
 │   ├── src/{lib,main,commands,tray}.rs
 │   └── {tauri.conf.json, capabilities/default.json}
 ├── ui/                              # 前端（静态 HTML/CSS/JS，无打包器）
-├── scripts/gen-icon.js              # 生成图标源 PNG（零依赖）
+├── scripts/
+│   ├── gen-icon.js                  # 生成图标源 PNG（零依赖）
+│   └── bench/                       # 性能压测工具（假 T5 节点 + 压测客户端 + 采样器）
 ├── .github/workflows/build.yml
 ├── README.md                        # 本文件（含协议原理、完整时序、排查表）
 └── ui-prototype.html                # 界面设计稿（浏览器可直接打开预览）
@@ -673,7 +675,7 @@ B 的效率高于 C，因为 C 的连接数多 37 倍，每条连接的协议处
 
 也就是说：**实际使用时 CPU 基本可以忽略，内存才是唯一需要关注的资源**，而它只取决于并发连接数（每连接 67 KB）。
 
-> 测试脚本（假 T5 节点、压测客户端、采样器）为一次性验证工具，未纳入仓库。
+> 测试脚本已收录在 [`scripts/bench/`](scripts/bench/README.md)，含假 T5 节点、压测客户端与两个平台的采样器，可复现上述数据。
 
 ---
 
