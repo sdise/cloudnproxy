@@ -13,10 +13,12 @@
 //! 再在这条链路里发起上面的改写请求，形成三级链路。
 
 use crate::config::Config;
+use crate::netinfo;
 use std::io;
+use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
+use tokio::net::{TcpSocket, TcpStream};
 
 /// 去掉可能造成 HTTP 头注入的换行符。
 fn sanitize(v: &str) -> String {
@@ -43,8 +45,7 @@ async fn open(cfg: &Config, node_addr: &str, target_authority: &str) -> io::Resu
     // ---- 第一步：连到节点；若启用 Chain 则先过一级代理 ----
     let mut stream = if cfg.chain_enabled && !cfg.chain_addr.trim().is_empty() {
         let chain = cfg.chain_addr.trim();
-        let mut s = TcpStream::connect(chain).await?;
-        let _ = s.set_nodelay(true);
+        let mut s = connect_bound(cfg, chain).await?;
         let req = format!("CONNECT {node_addr} HTTP/1.1\r\nHost: {node_addr}\r\n\r\n");
         s.write_all(req.as_bytes()).await?;
         let head = read_headers(&mut s).await?;
@@ -56,7 +57,7 @@ async fn open(cfg: &Config, node_addr: &str, target_authority: &str) -> io::Resu
         }
         s
     } else {
-        TcpStream::connect(node_addr).await?
+        connect_bound(cfg, node_addr).await?
     };
 
     if cfg.tcp_nodelay {
@@ -82,6 +83,42 @@ async fn open(cfg: &Config, node_addr: &str, target_authority: &str) -> io::Resu
     }
 
     Ok(stream)
+}
+
+/// 建立 TCP 连接，并按配置应用出站网卡绑定。
+///
+/// 用 `TcpSocket` 而非 `TcpStream::connect`，因为绑定必须发生在 connect 之前。
+async fn connect_bound(cfg: &Config, addr: &str) -> io::Result<TcpStream> {
+    let target: SocketAddr = match addr.parse() {
+        Ok(sa) => sa,
+        Err(_) => tokio::net::lookup_host(addr)
+            .await?
+            .next()
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::AddrNotAvailable, format!("无法解析地址 {addr}"))
+            })?,
+    };
+
+    let sock = if target.is_ipv4() {
+        TcpSocket::new_v4()?
+    } else {
+        TcpSocket::new_v6()?
+    };
+    if cfg.tcp_nodelay {
+        let _ = sock.set_nodelay(true);
+    }
+
+    let spec = cfg.egress_interface.trim();
+    if !spec.eq_ignore_ascii_case("system") {
+        if let Err(e) = netinfo::apply_binding(&sock, spec) {
+            return Err(io::Error::new(
+                e.kind(),
+                format!("绑定出站网卡失败（{spec}）: {e}"),
+            ));
+        }
+    }
+
+    sock.connect(target).await
 }
 
 /// 逐字节读取直到 `\r\n\r\n`，返回完整响应头文本。

@@ -10,6 +10,21 @@ fn default_port() -> u16 {
     443
 }
 
+/// 默认测速链接：1 MB 固定大小，便于快速采样。
+pub const DEFAULT_SPEED_URL: &str = "https://speed.cloudflare.com/__down?bytes=1000000";
+
+/// 内置可选的测速链接。
+///
+/// 注意 Cloudflare 的 `/__down` 对 `bytes` 有上限（**99 MB**），
+/// 写 `100000000` 会被拒绝，因此这里用 99 MB。
+fn default_speed_urls() -> Vec<String> {
+    vec![
+        DEFAULT_SPEED_URL.to_string(),
+        "https://speed.cloudflare.com/__down?bytes=10000000".to_string(),
+        "https://speed.cloudflare.com/__down?bytes=99000000".to_string(),
+    ]
+}
+
 /// 一个候选 T5 节点及其最近一次探测结果。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -105,11 +120,25 @@ pub struct Config {
     pub chain_addr: String,
 
     // ---- 转发行为 ----
+    /// 出站网卡绑定：
+    /// - 空字符串：自动选择物理网卡（绕过 TUN，默认）
+    /// - `system`：不绑定，完全跟随系统路由表（可能被 TUN 接管）
+    /// - 其他：按名称绑定指定网卡
+    ///
+    /// 注意：绑定物理网卡后，流量走该网卡所在网络。若该网络本身不能直连外网
+    /// （例如企业网必须经 HTTP 代理），需同时启用 `chain_enabled`，否则连接超时。
+    pub egress_interface: String,
     pub connect_timeout_ms: u64,
     pub tcp_nodelay: bool,
     pub tunnel_pool: bool,
     pub auto_reconnect: bool,
     pub auto_switch: bool,
+
+    // ---- 测速 ----
+    /// 可选的测速链接列表（界面下拉展示，可自行增删）
+    pub speed_urls: Vec<String>,
+    /// 当前使用的测速链接
+    pub speed_url: String,
 
     // ---- 日志 ----
     /// 最低输出级别：trace / debug / info / warn / error
@@ -147,11 +176,15 @@ impl Default for Config {
             chain_enabled: false,
             chain_addr: String::new(),
 
+            egress_interface: String::new(),
             connect_timeout_ms: 10_000,
             tcp_nodelay: true,
             tunnel_pool: true,
             auto_reconnect: true,
             auto_switch: false,
+
+            speed_urls: default_speed_urls(),
+            speed_url: DEFAULT_SPEED_URL.to_string(),
 
             log_level: "info".to_string(),
             log_file: String::new(),
@@ -180,6 +213,16 @@ impl Config {
         format!("{host}:{}", self.listen_port)
     }
 
+    /// 实际使用的测速链接；为空时回退到内置默认值。
+    pub fn effective_speed_url(&self) -> &str {
+        let u = self.speed_url.trim();
+        if u.is_empty() {
+            DEFAULT_SPEED_URL
+        } else {
+            u
+        }
+    }
+
     /// 实际使用的上游节点地址。
     pub fn upstream_addr(&self) -> String {
         if !self.current_node.trim().is_empty() {
@@ -203,9 +246,29 @@ impl Config {
 
     pub fn load(path: &Path) -> std::io::Result<Self> {
         let text = std::fs::read_to_string(path)?;
-        toml::from_str(&text).map_err(|e| {
+        let mut cfg: Self = toml::from_str(&text).map_err(|e| {
             std::io::Error::new(std::io::ErrorKind::InvalidData, format!("config 解析失败: {e}"))
-        })
+        })?;
+        cfg.migrate();
+        Ok(cfg)
+    }
+
+    /// 修正历史版本写入配置的失效值。
+    ///
+    /// 旧版把 Cloudflare 测速链接写成了 `bytes=100000000`，而该接口的上限是
+    /// 99 MB，请求会被拒绝。这里在读取时自动换成合法值，用户不必手动改配置。
+    fn migrate(&mut self) {
+        const OLD: &str = "https://speed.cloudflare.com/__down?bytes=100000000";
+        const NEW: &str = "https://speed.cloudflare.com/__down?bytes=99000000";
+
+        for u in self.speed_urls.iter_mut() {
+            if u == OLD {
+                *u = NEW.to_string();
+            }
+        }
+        if self.speed_url == OLD {
+            self.speed_url = NEW.to_string();
+        }
     }
 
     /// 读取配置；文件不存在时返回默认配置。

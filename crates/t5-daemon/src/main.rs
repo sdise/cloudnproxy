@@ -213,6 +213,26 @@ async fn main() -> ExitCode {
         }
     };
 
+    // ---------- 出站路径提示 ----------
+    // 本机若开着 TUN 模式的代理软件，到节点的流量可能被接管，导致测速失真。
+    let target_ip = cfg
+        .upstream_addr()
+        .split(':')
+        .next()
+        .unwrap_or("")
+        .to_string();
+    if !target_ip.is_empty() {
+        let info = tokio::task::spawn_blocking(move || t5_core::netinfo::probe(&target_ip))
+            .await
+            .unwrap_or_default();
+        if info.via_tun {
+            logs.warn(info.describe());
+            logs.warn("提示：可在代理软件的路由规则中把本程序或节点 IP 设为 direct 以绕过 TUN");
+        } else {
+            logs.info(info.describe());
+        }
+    }
+
     // ---------- 后台刷新节点列表 ----------
     if cfg.nodes.is_empty() && !cfg.resolve_domain.trim().is_empty() {
         let client = t5_core::resolver::http_client();
@@ -221,14 +241,18 @@ async fn main() -> ExitCode {
         let path = cfg_path.clone();
         let logs_bg = logs.clone();
         tokio::spawn(async move {
-            logs_bg.info(format!("后台解析节点域名 {domain} …"));
-            let ips = t5_core::resolver::resolve_domain(&client, &domain).await;
-            if ips.is_empty() {
+            logs_bg.info(format!("后台解析节点域名 {domain} …（多源 DoH + 多地域 ECS）"));
+            let report = t5_core::resolver::resolve_domain(&client, &domain).await;
+            if report.ips.is_empty() {
                 logs_bg.warn("解析未获得任何 IP，可稍后重新解析");
             } else {
-                snapshot.merge_node_ips(&ips);
+                snapshot.merge_node_ips(&report.ips);
                 let _ = snapshot.save(&path);
-                logs_bg.info(format!("解析到 {} 个节点", snapshot.nodes.len()));
+                logs_bg.info(format!(
+                    "解析到 {} 个节点（来源 {}）",
+                    snapshot.nodes.len(),
+                    report.summary()
+                ));
             }
         });
     }

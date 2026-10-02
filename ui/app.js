@@ -15,6 +15,7 @@
     cfg: null,
     cfgPath: '',
     status: { running: false, addr: '', upstream: '', chain: '' },
+    egress: null,
     logs: [],
     hist: [],
     sort: { key: 'speed', asc: false },
@@ -98,6 +99,54 @@
     syncChainEnabled();
     $('cfgPathRow').textContent = S.cfgPath || '—';
     $('cfgPathText').textContent = shortPath(S.cfgPath);
+    renderSpeedUrls();
+    renderInterfaces();
+  }
+
+  function renderInterfaces() {
+    const sel = $('egressSel');
+    if (!sel) return;
+    const cur = (S.cfg && S.cfg.egress_interface) || '';
+    const list = S.ifaces || [];
+    const opts = [];
+
+    opts.push(`<option value=""${cur === '' ? ' selected' : ''}>自动（物理网卡，绕过 TUN）</option>`);
+    opts.push(`<option value="system"${cur === 'system' ? ' selected' : ''}>跟随系统路由（可能被 TUN 接管）</option>`);
+
+    const seen = [];
+    list.forEach((i) => {
+      if (!i || !i.name) return;
+      seen.push(i.name);
+      const kind = i.is_tun ? 'TUN' : (i.is_virtual ? '虚拟' : '物理');
+      const extra = i.ipv4 ? '，' + i.ipv4 : '';
+      const down = i.is_up ? '' : '，未启用';
+      const label = `${i.name}（${kind}${extra}${down}）`;
+      opts.push(`<option value="${esc(i.name)}"${cur === i.name ? ' selected' : ''}>${esc(label)}</option>`);
+    });
+
+    // 配置里指定的网卡在当前列表中找不到时，仍然显示出来，避免选择被静默重置
+    if (cur && cur !== 'system' && !seen.includes(cur)) {
+      opts.push(`<option value="${esc(cur)}" selected>${esc(cur)}（未检测到）</option>`);
+    }
+
+    sel.innerHTML = opts.join('');
+  }
+
+  function renderSpeedUrls() {
+    const sel = $('speedUrlSel');
+    if (!sel) return;
+    const cfg = S.cfg || {};
+    const current = cfg.speed_url || '';
+    let list = Array.isArray(cfg.speed_urls) ? cfg.speed_urls.slice() : [];
+    if (current && !list.includes(current)) list.unshift(current);
+
+    sel.innerHTML = list.length
+      ? list.map((u) => {
+          const label = u.length > 58 ? u.slice(0, 55) + '…' : u;
+          const selected = u === current ? ' selected' : '';
+          return `<option value="${esc(u)}" title="${esc(u)}"${selected}>${esc(label)}</option>`;
+        }).join('')
+      : '<option value="">（未设置）</option>';
   }
 
   function collectForm() {
@@ -153,6 +202,23 @@
 
     $('chainLocal').textContent = addr;
     $('chainNode').textContent = upstream;
+
+    // 出站路径：到节点的流量是否被 TUN 类网卡接管
+    const egr = S.egress || {};
+    const e = $('heroEgress');
+    if (!egr.interface) {
+      e.innerHTML = egr.target
+        ? `<span class="dim">出站接口：未探测到（目标 ${esc(egr.target)}）</span>`
+        : '<span class="dim">出站接口：未探测到</span>';
+    } else if (egr.via_tun) {
+      e.innerHTML =
+        `<span class="egress-warn">⚠ 走 TUN（${esc(egr.interface)}）</span>` +
+        `<span class="dim"> · 到 ${esc(egr.target)} 的流量被代理软件接管，测速结果会失真</span>`;
+    } else {
+      e.innerHTML =
+        `<span class="egress-ok">✓ 直连（${esc(egr.interface)}）</span>` +
+        `<span class="dim"> · 到 ${esc(egr.target)} 的流量未经过 TUN</span>`;
+    }
   }
 
   function renderStats(tick) {
@@ -302,7 +368,7 @@
     try {
       const st = await invoke('get_status');
       S.status = st.engine || { running: false };
-      if (S.cfg && Array.isArray(st.nodes) === false) { /* noop */ }
+      S.egress = st.egress || null;
       renderStatus();
     } catch (e) { /* 忽略 */ }
   }
@@ -482,6 +548,67 @@
 
     $('themeSel').addEventListener('change', () => applyTheme($('themeSel').value));
     $('filterIsp').addEventListener('change', (e) => { S.filterIsp = e.target.value; renderNodes(); });
+
+    $('speedUrlSel').addEventListener('change', async (e) => {
+      const url = e.target.value;
+      if (!url) return;
+      try {
+        const list = await invoke('set_speed_url', { url });
+        S.cfg.speed_urls = list;
+        S.cfg.speed_url = url;
+        renderSpeedUrls();
+        toast('已切换测速链接');
+      } catch (err) { toast('切换失败：' + err); }
+    });
+
+    $('btnAddSpeedUrl').addEventListener('click', async () => {
+      const url = $('speedUrlInput').value.trim();
+      if (!url) { toast('请输入测速链接'); return; }
+      if (!/^https?:\/\//i.test(url)) { toast('链接需以 http:// 或 https:// 开头'); return; }
+      try {
+        const list = await invoke('set_speed_url', { url });
+        S.cfg.speed_urls = list;
+        S.cfg.speed_url = url;
+        $('speedUrlInput').value = '';
+        renderSpeedUrls();
+        toast('已添加并设为当前测速链接');
+      } catch (err) { toast('添加失败：' + err); }
+    });
+
+    $('egressSel').addEventListener('change', async (e) => {
+      const iface = e.target.value;
+      try {
+        await invoke('set_egress_interface', { iface });
+        S.cfg.egress_interface = iface;
+        toast(iface && iface !== 'system'
+          ? '出站网卡已绑定，若无法上网请检查 Chain 代理'
+          : '出站网卡已切回跟随系统路由');
+        await refreshStatus();
+      } catch (err) {
+        toast('切换失败：' + err);
+        renderInterfaces();
+      }
+    });
+
+    $('btnRefreshIf').addEventListener('click', async () => {
+      try {
+        S.ifaces = (await invoke('list_interfaces')) || [];
+        renderInterfaces();
+        toast('网卡列表已刷新');
+      } catch (err) { toast('刷新失败：' + err); }
+    });
+
+    $('btnDelSpeedUrl').addEventListener('click', async () => {
+      const url = $('speedUrlSel').value;
+      if (!url) return;
+      try {
+        const list = await invoke('remove_speed_url', { url });
+        S.cfg.speed_urls = list;
+        if (!list.includes(S.cfg.speed_url)) S.cfg.speed_url = list[0] || '';
+        renderSpeedUrls();
+        toast('已删除测速链接');
+      } catch (err) { toast('删除失败：' + err); }
+    });
     $('logLevel').addEventListener('change', renderLogs);
     $('logFilter').addEventListener('input', renderLogs);
     $('logFollow').addEventListener('click', (e) => {
@@ -563,11 +690,18 @@
     try {
       const st = await invoke('get_status');
       S.status = st.engine || { running: false };
+      S.egress = st.egress || null;
       S.cfgPath = st.config_path || '';
       S.cfg = await invoke('get_config');
       S.logs = (await invoke('get_logs')) || [];
     } catch (e) {
       S.cfg = { nodes: [] };
+    }
+
+    try {
+      S.ifaces = (await invoke('list_interfaces')) || [];
+    } catch (e) {
+      S.ifaces = [];
     }
 
     if (S.cfg) {
@@ -610,8 +744,15 @@
     resolve_domain: 'cloudnproxy.baidu.com',
     upstream: '163.177.17.189:443', current_node: '163.177.17.189:443',
     fake_host: 'cloudnproxy.baidu.com', t5_auth: '1050504963', max_conns: 512,
-    chain_enabled: false, chain_addr: '', connect_timeout_ms: 10000,
+    chain_enabled: false, chain_addr: '', egress_interface: '', connect_timeout_ms: 10000,
     tcp_nodelay: true, tunnel_pool: true, auto_reconnect: true, auto_switch: false,
+    speed_urls: [
+      'https://speed.cloudflare.com/__down?bytes=1000000',
+      'https://speed.cloudflare.com/__down?bytes=10000000',
+      'https://speed.cloudflare.com/__down?bytes=99000000',
+    ],
+    speed_url: 'https://speed.cloudflare.com/__down?bytes=1000000',
+    log_level: 'info', log_file: '',
     autostart: false, autostart_connect: true, start_minimized: true,
     close_to_tray: true, floating: false, theme: 'system',
     nodes: DEMO_NODES,
@@ -627,6 +768,8 @@
           nodes: demoCfg.nodes.length,
           resolve_domain: demoCfg.resolve_domain,
           config_path: 'C:/Users/you/AppData/Roaming/dev.cloudnproxy.app/config.toml',
+          // 浏览器预览用的演示值：模拟「流量被 TUN 接管」的提示样式
+          egress: { target: '163.177.17.189', interface: 'Wintun', via_tun: true },
         };
       case 'get_config': return JSON.parse(JSON.stringify(demoCfg));
       case 'apply_config': Object.assign(demoCfg, args.cfg); return demoCfg;
@@ -639,6 +782,31 @@
           { ts: Date.now() - 3000, level: 'INFO', msg: 'CONNECT speed.cloudflare.com:80 → OK (24ms)' },
           { ts: Date.now(), level: 'INFO', msg: '（浏览器预览模式：未连接后端）' },
         ];
+      case 'set_speed_url': {
+        if (!demoCfg.speed_urls.includes(args.url)) demoCfg.speed_urls.push(args.url);
+        demoCfg.speed_url = args.url;
+        return demoCfg.speed_urls.slice();
+      }
+      case 'remove_speed_url': {
+        demoCfg.speed_urls = demoCfg.speed_urls.filter((u) => u !== args.url);
+        if (!demoCfg.speed_urls.length) {
+          demoCfg.speed_urls.push('https://speed.cloudflare.com/__down?bytes=1000000');
+        }
+        if (!demoCfg.speed_urls.includes(demoCfg.speed_url)) {
+          demoCfg.speed_url = demoCfg.speed_urls[0];
+        }
+        return demoCfg.speed_urls.slice();
+      }
+      case 'list_interfaces':
+        return [
+          { name: 'WLAN', index: 11, ipv4: '192.168.41.159', description: 'Intel(R) Wi-Fi 6 AX200', media: 'Native 802.11', is_up: true, is_tun: false, is_virtual: false, is_loopback: false },
+          { name: 'xray_tun', index: 9, ipv4: '172.18.0.1', description: 'Wintun Tunnel', media: 'IP', is_up: true, is_tun: true, is_virtual: true, is_loopback: false },
+          { name: '本地连接', index: 7, ipv4: '169.254.150.30', description: 'VPN Client Adapter - VPN', media: '802.3', is_up: false, is_tun: false, is_virtual: true, is_loopback: false },
+          { name: '以太网', index: 5, ipv4: '', description: 'Intel(R) I210 Gigabit', media: '802.3', is_up: false, is_tun: false, is_virtual: false, is_loopback: false },
+        ];
+      case 'set_egress_interface':
+        demoCfg.egress_interface = args.iface;
+        return null;
       case 'is_autostart_enabled': return false;
       case 'benchmark_all': return demoCfg.nodes.length;
       case 'benchmark_one': return { latency_ms: 30, speed_mbps: 88.8, bytes: 0, region: '广州', entry_isp: '联通', exit_ip: '14.215.185.28', exit_region: '广州', exit_isp: '电信', exit_asn: 'AS4134' };

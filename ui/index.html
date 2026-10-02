@@ -47,7 +47,13 @@
           <div class="info">
             <div class="st" id="heroState">已停止</div>
             <div class="meta" id="heroMeta">本地 SOCKS5 未运行</div>
-          </div>
+            <div class="meta" id="heroEgress"></div>
+            <div class="meta iface-row">
+              <span class="dim">出站网卡</span>
+              <select id="egressSel"></select>
+              <button class="btn sm" id="btnRefreshIf">刷新</button>
+            </div>
+            </div>
           <div class="swbox">
             <span class="swtip">关闭本窗口后<br>引擎继续常驻</span>
             <div class="sw wide" id="powerSw"></div>
@@ -90,14 +96,23 @@
           <div class="toolbar">
             <input id="domainInput" class="grow" placeholder="cloudnproxy.baidu.com">
             <button class="btn primary" id="btnResolve">⟳ 解析域名</button>
-            <button class="btn primary" id="btnBenchAll">⚡ 全部测速</button>
-            <button class="btn" id="btnBenchStop" disabled>⏹ 停止</button>
-            <select id="filterIsp" class="right">
+          </div>
+          <div class="toolbar">
+            <span class="dim">测速链接</span>
+            <select id="speedUrlSel" style="max-width:360px"></select>
+            <input id="speedUrlInput" class="grow" placeholder="自定义测速链接，例如 https://speed.cloudflare.com/__down?bytes=10000000">
+            <button class="btn" id="btnAddSpeedUrl">＋ 添加</button>
+            <button class="btn" id="btnDelSpeedUrl">删除</button>
+          </div>
+          <div class="toolbar end" style="margin-bottom:14px">
+            <select id="filterIsp">
               <option value="">全部运营商</option>
               <option value="电信">电信</option>
               <option value="联通">联通</option>
               <option value="移动">移动</option>
             </select>
+            <button class="btn primary" id="btnBenchAll">⚡ 全部测速</button>
+            <button class="btn" id="btnBenchStop" disabled>⏹ 停止</button>
           </div>
 
           <div class="table-wrap">

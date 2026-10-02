@@ -11,15 +11,19 @@
 //! - [`resolver`]  DoH 域名解析与 GeoIP 查询
 //! - [`bench`]     节点延迟 / 带宽测速
 //! - [`tunnel_pool`] 上游隧道预建与复用
+//! - [`temp_proxy`] 测速用的临时单节点 SOCKS5 出口
+//! - [`netinfo`]   出站路径探测（是否经过 TUN）
 
 pub mod bench;
 pub mod config;
 pub mod engine;
 pub mod logbuf;
+pub mod netinfo;
 pub mod outbound;
 pub mod resolver;
 pub mod socks5;
 pub mod stats;
+pub mod temp_proxy;
 pub mod tunnel_pool;
 
 pub use config::{Config, Node};

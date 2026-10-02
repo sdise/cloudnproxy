@@ -18,6 +18,8 @@ pub struct StatusPayload {
     pub resolve_domain: String,
     pub autostart: bool,
     pub config_path: String,
+    /// 到当前上游节点的出站路径（是否被 TUN 接管）
+    pub egress: t5_core::netinfo::EgressInfo,
 }
 
 #[tauri::command]
@@ -41,6 +43,21 @@ pub async fn get_status(app: AppHandle, state: State<'_, AppState>) -> Result<St
         }
     };
 
+    // 探测到节点的出站路径。查询要走系统命令，放到阻塞线程池避免拖住异步运行时。
+    let target_ip = cfg
+        .upstream_addr()
+        .split(':')
+        .next()
+        .unwrap_or("")
+        .to_string();
+    let egress = if target_ip.is_empty() {
+        t5_core::netinfo::EgressInfo::default()
+    } else {
+        tokio::task::spawn_blocking(move || t5_core::netinfo::probe(&target_ip))
+            .await
+            .unwrap_or_default()
+    };
+
     Ok(StatusPayload {
         engine,
         stats: state.stats.snapshot(),
@@ -48,6 +65,7 @@ pub async fn get_status(app: AppHandle, state: State<'_, AppState>) -> Result<St
         resolve_domain: cfg.resolve_domain.clone(),
         autostart: app.autolaunch().is_enabled().unwrap_or(false),
         config_path: state.config_path.display().to_string(),
+        egress,
     })
 }
 
@@ -140,9 +158,11 @@ pub async fn resolve_nodes(
         return Err("域名不能为空".into());
     }
 
-    state.logs.info(format!("解析 {domain} …"));
-    let ips = t5_core::resolver::resolve_domain(&state.client, &domain).await;
-    if ips.is_empty() {
+    state
+        .logs
+        .info(format!("解析 {domain} …（多源 DoH + 多地域 ECS）"));
+    let report = t5_core::resolver::resolve_domain(&state.client, &domain).await;
+    if report.ips.is_empty() {
         state.logs.warn(format!("解析 {domain} 未获得任何 IP"));
         return Err(format!("解析 {domain} 失败，请检查网络"));
     }
@@ -150,12 +170,16 @@ pub async fn resolve_nodes(
     let nodes = {
         let mut cfg = state.cfg.lock().await;
         cfg.resolve_domain = domain.clone();
-        cfg.merge_node_ips(&ips);
+        cfg.merge_node_ips(&report.ips);
         let _ = cfg.save(state.config_path.as_path());
         cfg.nodes.clone()
     };
 
-    state.logs.info(format!("解析 {domain} → {} 个节点", nodes.len()));
+    state.logs.info(format!(
+        "解析 {domain} → {} 个节点（来源 {}）",
+        nodes.len(),
+        report.summary()
+    ));
     let _ = app.emit("nodes-changed", &nodes);
     Ok(nodes)
 }
@@ -222,9 +246,11 @@ pub async fn benchmark_all(
             );
 
             match (res.speed_mbps, res.latency_ms) {
-                (Some(speed), Some(lat)) => {
-                    logs.info(format!("{addr} → {speed:.2} Mbps, {lat} ms"))
-                }
+                (Some(speed), Some(lat)) => logs.info(format!(
+                    "{addr} → {speed:.2} Mbps, {lat} ms（下载 {:.2} MB / {:.1} 秒）",
+                    res.bytes as f64 / 1_048_576.0,
+                    res.seconds.unwrap_or(0.0)
+                )),
                 _ => logs.warn(format!(
                     "{addr} → 失败：{}",
                     res.error.clone().unwrap_or_else(|| "无数据".into())
@@ -270,7 +296,12 @@ pub async fn benchmark_one(
     }
 
     match res.speed_mbps {
-        Some(speed) => state.logs.info(format!("{addr} → {speed:.2} Mbps")),
+        Some(speed) => state.logs.info(format!(
+            "{addr} → {speed:.2} Mbps, {} ms（下载 {:.2} MB / {:.1} 秒）",
+            res.latency_ms.unwrap_or(0),
+            res.bytes as f64 / 1_048_576.0,
+            res.seconds.unwrap_or(0.0)
+        )),
         None => state.logs.warn(format!(
             "{addr} → 失败：{}",
             res.error.clone().unwrap_or_else(|| "无数据".into())
@@ -350,6 +381,110 @@ pub async fn set_autostart(
         "已关闭开机自启"
     });
     Ok(now)
+}
+
+/// 选定一个测速链接；若不在列表中则一并加入。返回更新后的链接列表。
+#[tauri::command]
+pub async fn set_speed_url(
+    state: State<'_, AppState>,
+    url: String,
+) -> Result<Vec<String>, String> {
+    let url = url.trim().to_string();
+    if url.is_empty() {
+        return Err("测速链接不能为空".into());
+    }
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        return Err("测速链接需以 http:// 或 https:// 开头".into());
+    }
+
+    let list = {
+        let mut c = state.cfg.lock().await;
+        if !c.speed_urls.iter().any(|u| u == &url) {
+            c.speed_urls.push(url.clone());
+        }
+        c.speed_url = url.clone();
+        c.save(state.config_path.as_path())
+            .map_err(|e| format!("保存配置失败: {e}"))?;
+        c.speed_urls.clone()
+    };
+
+    state.logs.info(format!("测速链接已设为 {url}"));
+    Ok(list)
+}
+
+/// 删除一个测速链接；若删的正是当前链接，则回退到列表首项。
+#[tauri::command]
+pub async fn remove_speed_url(
+    state: State<'_, AppState>,
+    url: String,
+) -> Result<Vec<String>, String> {
+    let list = {
+        let mut c = state.cfg.lock().await;
+        c.speed_urls.retain(|u| u != &url);
+        if c.speed_urls.is_empty() {
+            c.speed_urls
+                .push(t5_core::config::DEFAULT_SPEED_URL.to_string());
+        }
+        if c.speed_url.trim().is_empty() || c.speed_url == url {
+            c.speed_url = c.speed_urls[0].clone();
+        }
+        c.save(state.config_path.as_path())
+            .map_err(|e| format!("保存配置失败: {e}"))?;
+        c.speed_urls.clone()
+    };
+
+    state.logs.info(format!("已删除测速链接 {url}"));
+    Ok(list)
+}
+
+/// 列出本机网卡，供「出站网卡」下拉使用。
+#[tauri::command]
+pub fn list_interfaces() -> Vec<t5_core::netinfo::InterfaceInfo> {
+    t5_core::netinfo::list_interfaces()
+}
+
+/// 设置出站网卡绑定；引擎运行中会重启以生效。
+#[tauri::command]
+pub async fn set_egress_interface(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    iface: String,
+) -> Result<(), String> {
+    let was_running = {
+        let guard = state.engine.lock().await;
+        guard.as_ref().map(|h| h.is_running()).unwrap_or(false)
+    };
+
+    let chain_ready = {
+        let mut c = state.cfg.lock().await;
+        c.egress_interface = iface.clone();
+        c.save(state.config_path.as_path())
+            .map_err(|e| format!("保存配置失败: {e}"))?;
+        c.chain_enabled && !c.chain_addr.trim().is_empty()
+    };
+
+    if was_running {
+        stop_engine(state.inner()).await;
+        start_engine(state.inner()).await?;
+    }
+
+    let spec = iface.trim();
+    if spec.is_empty() {
+        state.logs.info("出站网卡：自动选择物理网卡（绕过 TUN）");
+    } else if spec.eq_ignore_ascii_case("system") {
+        state.logs.info("出站网卡：跟随系统路由（可能被 TUN 接管）");
+    } else {
+        state.logs.info(format!("出站网卡已绑定为 {spec}"));
+    }
+
+    if !chain_ready && !spec.is_empty() && !spec.eq_ignore_ascii_case("system") {
+        state.logs.warn(
+            "已绑定物理网卡但未启用 Chain；若该网络需要经代理才能出网，连接会全部超时",
+        );
+    }
+
+    let _ = app.emit("config-changed", ());
+    Ok(())
 }
 
 #[tauri::command]
