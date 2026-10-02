@@ -439,13 +439,15 @@ latency_ms = 28
 | 文件 | 平台 | 体积 | 说明 |
 |---|---|---|---|
 | `CloudNProxy_x.y.z_x64-setup.exe` | Windows | ~1.9 MB | NSIS 安装包。含开始菜单项、卸载程序 |
-| `cloudnproxy.exe` | Windows | ~4.9 MB | 免安装绿色版，双击即可运行 |
-| `t5d.exe` | Windows | ~2.0 MB | 无 GUI 版本，命令行工具 |
-| `CloudNProxy_x.y.z_amd64.deb` | Linux | ~2.8 MB | Debian / Ubuntu 安装包。**webkit 等依赖由 apt 提供**，所以体积小 |
+| `cloudnproxy.exe` | Windows | ~5.0 MB | 免安装绿色版，双击即可运行 |
+| `t5d.exe` | Windows | ~2.7 MB | 无 GUI 版本，命令行工具（含 Web 控制台） |
+| `CloudNProxy_x.y.z_amd64.deb` | Linux | ~2.9 MB | Debian / Ubuntu 安装包。**webkit 等依赖由 apt 提供**，所以体积小 |
 | `CloudNProxy_x.y.z_amd64.AppImage` | Linux | ~78 MB | 便携版。把 WebKit / GTK 整套运行时打包进文件，拷到任意发行版直接运行，无需安装任何依赖 |
-| `cloudnproxy` | Linux | ~6.2 MB | 图形界面版裸二进制（要求系统已装 `libwebkit2gtk-4.1-0`） |
-| `t5d` | Linux | ~2.4 MB | 无 GUI 版裸二进制，**动态链接 glibc** |
-| `t5d-musl` | Linux | ~2.5 MB | 无 GUI 版**静态链接**，零动态依赖 |
+| `cloudnproxy` | Linux | ~6.4 MB | 图形界面版裸二进制（要求系统已装 `libwebkit2gtk-4.1-0`） |
+| `t5d` | Linux | ~3.1 MB | 无 GUI 版裸二进制，**动态链接 glibc** |
+| `t5d-musl` | Linux | ~3.2 MB | 无 GUI 版**静态链接**，零动态依赖 |
+
+> 体积以 v0.2.0 实测为准。`t5d` 相比 v0.1.x 增大约 0.7 MB，来自内建的 Web 控制台（HTTP 服务、argon2 口令散列、JWT 签名，以及编译期嵌入的界面资源）。
 
 ### 怎么选
 
@@ -463,7 +465,7 @@ latency_ms = 28
 
 | | `t5d`（动态链接 gnu/glibc） | `t5d-musl`（静态链接 musl） |
 |---|---|---|
-| 体积 | 2.38 MB | 2.50 MB |
+| 体积 | 3.09 MB | 3.22 MB |
 | `ldd` 结果 | 列出 `libc.so.6` 等一串依赖 | `statically linked`（`static-pie`） |
 | 能否跑在 Alpine / BusyBox | ✗（musl 与 glibc 不兼容） | ✓ |
 | 能否跑在老发行版（CentOS 7 等） | ✗ 常报 `GLIBC_2.xx not found` | ✓ |
@@ -473,7 +475,7 @@ latency_ms = 28
 
 两者承诺不同：**deb** 只声明"我依赖 webkit2gtk"，库由系统提供；**AppImage** 承诺"拷到任何机器直接跑"，所以把整套图形栈塞进文件 —— `libjavascriptcoregtk`（JS 引擎）、`libwebkit2gtk`、GTK3 全家桶、ICU 数据、GStreamer 核心库等。这部分约占 78 MB 中的 90%+，本项目自己的代码只有约 6 MB。
 
-作为对照：Windows 端只有 1.9–4.9 MB，因为 Windows 11 系统自带 WebView2，不需要打包浏览器内核。
+作为对照：Windows 端只有 1.9–5.0 MB，因为 Windows 11 系统自带 WebView2，不需要打包浏览器内核。
 
 ---
 
