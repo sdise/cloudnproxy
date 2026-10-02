@@ -201,21 +201,9 @@ async fn main() -> ExitCode {
     logs.info(format!("配置文件: {}", cfg_path.display()));
     logs.info(format!("日志级别: {effective}"));
 
-    // ---------- 首次解析节点 ----------
-    if cfg.nodes.is_empty() && !cfg.resolve_domain.trim().is_empty() {
-        let client = t5_core::resolver::http_client();
-        logs.info(format!("解析节点域名 {} …", cfg.resolve_domain));
-        let ips = t5_core::resolver::resolve_domain(&client, &cfg.resolve_domain).await;
-        if ips.is_empty() {
-            logs.warn("解析未获得任何 IP；仍继续启动，可稍后重新解析");
-        } else {
-            cfg.merge_node_ips(&ips);
-            let _ = cfg.save(&cfg_path);
-            logs.info(format!("解析到 {} 个节点", cfg.nodes.len()));
-        }
-    }
-
     // ---------- 启动引擎 ----------
+    // 先让监听端口就绪，再做网络相关的准备工作：节点解析受上游 DNS 影响，
+    // 若放在启动路径上会拖慢服务可用时间（甚至让健康检查误判为启动失败）。
     let stats = Stats::new();
     let engine = match t5_core::engine::start(cfg.clone(), logs.clone(), stats.clone()).await {
         Ok(h) => h,
@@ -224,6 +212,26 @@ async fn main() -> ExitCode {
             return ExitCode::from(1);
         }
     };
+
+    // ---------- 后台刷新节点列表 ----------
+    if cfg.nodes.is_empty() && !cfg.resolve_domain.trim().is_empty() {
+        let client = t5_core::resolver::http_client();
+        let domain = cfg.resolve_domain.clone();
+        let mut snapshot = cfg.clone();
+        let path = cfg_path.clone();
+        let logs_bg = logs.clone();
+        tokio::spawn(async move {
+            logs_bg.info(format!("后台解析节点域名 {domain} …"));
+            let ips = t5_core::resolver::resolve_domain(&client, &domain).await;
+            if ips.is_empty() {
+                logs_bg.warn("解析未获得任何 IP，可稍后重新解析");
+            } else {
+                snapshot.merge_node_ips(&ips);
+                let _ = snapshot.save(&path);
+                logs_bg.info(format!("解析到 {} 个节点", snapshot.nodes.len()));
+            }
+        });
+    }
 
     // 每分钟输出一次统计，便于观察
     {

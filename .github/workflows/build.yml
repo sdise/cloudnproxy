@@ -97,14 +97,26 @@ jobs:
           set -o pipefail
           ./target/release/t5d -f /tmp/cnp/config.toml -log debug > /tmp/cnp/stdout.log 2>&1 &
           echo $! > /tmp/cnp/t5d.pid
-          sleep 6
+
+          echo "=========== 端口就绪探测 ==========="
+          echo "（节点解析已移到后台，端口应秒级就绪）"
+          ready=0
+          for i in $(seq 1 15); do
+            if (ss -ltn 2>/dev/null || netstat -ltn) | grep -q 11080; then
+              echo "端口在 ${i} 秒内就绪"
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ready" -ne 1 ]; then
+            echo "::error::11080 端口未监听，daemon 未正常启动"
+            cat /tmp/cnp/stdout.log
+            exit 1
+          fi
 
           echo "=========== 标准输出日志 ==========="
           cat /tmp/cnp/stdout.log
-
-          echo "=========== 端口监听 ==========="
-          (ss -ltn 2>/dev/null || netstat -ltn) | grep 11080 \
-            || { echo "::error::11080 端口未监听，daemon 未正常启动"; exit 1; }
 
           echo "=========== 日志文件 ==========="
           if [ -s /tmp/cnp/t5d.log ]; then
