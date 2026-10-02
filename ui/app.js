@@ -1045,8 +1045,12 @@
     } catch (e) { /* 忽略 */ }
 
     const mode = isTauri ? '桌面版 · Tauri v2' : (isWeb ? 'Web 控制台' : '界面预览');
-    $('aboutVer').textContent =
-      'CloudNProxy v' + (S.version || '0.2.0') + ' · Rust · ' + mode;
+    // 版本号由后端给出（编译期的 CARGO_PKG_VERSION），配置文件里并不保存版本。
+    // 侧栏与「关于」两处都要更新 —— 早先只更新了后者，导致侧栏一直停在
+    // index.html 里写死的占位文本上。
+    const ver = S.version || '0.0.0';
+    $('verText').textContent = 'v' + ver;
+    $('aboutVer').textContent = 'CloudNProxy v' + ver + ' · Rust · ' + mode;
     window.addEventListener('resize', drawChart);
   }
 
@@ -1138,7 +1142,7 @@
       case 'check_update':
         return {
           has_update: true,
-          current: '0.2.1',
+          current: '0.2.2',
           latest: 'v0.3.0',
           url: 'https://github.com/sdise/cloudnproxy/releases',
           published_at: '',

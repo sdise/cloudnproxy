@@ -1,14 +1,13 @@
 # CloudNProxy
 
-把**百度 T5 云代理节点**转换成**本地标准 SOCKS5 代理**。提供两种二进制、三种使用形态：
+把**百度 T5 云代理节点**转换成**本地标准 SOCKS5 代理**。提供两种形态，共用同一套界面资源与业务逻辑：
 
 | 形态 | 二进制 | 说明 |
 |---|---|---|
 | **图形界面版** | `cloudnproxy` | Windows 11 / Linux 桌面，五页界面 + 托盘 |
-| **无 GUI 版** | `t5d` | 纯 Rust，**不依赖 WebView 与图形环境**，适合服务器 / 容器 / 最小化发行版 |
-| **Web 控制台版** | 同上 `t5d` | 在浏览器里管理，界面与桌面版**完全一致**。不是独立二进制：`t5d` 内建了它，配置里打开即可用（默认关闭） |
+| **Web UI 版** | `t5d` | 纯 Rust，**不依赖 WebView 与图形环境**；界面就是上面那一套，在浏览器里访问（默认关闭，配置开启即可）。适合服务器 / 容器 / 最小化发行版 |
 
-三者共用同一套 `ui/` 界面资源与同一份业务逻辑，详见下文「[Web 控制台](#web-控制台在浏览器里管理)」章节。
+两者共用同一套 `ui/` 界面资源与同一份业务逻辑，浏览器中使用的具体步骤见下文「[Web 控制台](#web-控制台在浏览器里管理)」章节。
 
 > 界面设计稿见 [`ui-prototype.html`](./ui-prototype.html)，浏览器直接打开即可点击预览。
 > 本项目的前身是一套 9 个文件的 PowerShell 脚本，其协议原理、完整交互时序与历史测速数据已并入本文档（见「协议原理」与「节点选型参考」）。
@@ -90,7 +89,7 @@
 | **出站网卡绑定** | 概览页可指定本程序从哪张网卡出去，**内建绕过 TUN**，无需修改代理软件的设置 |
 | **出站路径提示** | 显示到上游节点的实际出站网卡，并提示流量是否被 TUN 模式的代理软件接管 |
 | **托盘** | 显示窗口、启动/暂停、测速选优、复制 SOCKS5 地址、退出 |
-| **Web 控制台** | 无 GUI 版可在浏览器里操作（默认关闭）：与桌面版**同一套界面**，JWT 登录，首次登录强制改密 |
+| **Web 控制台** | Web UI 版可在浏览器里操作（默认关闭）：与桌面版**同一套界面**，JWT 登录，首次登录强制改密 |
 | **自启** | Windows 注册表 Run 值 · Linux XDG autostart |
 | **持久化** | 配置与测速结果写入 `config.toml` |
 | **节点热切换** | 切换当前节点不重启引擎、不断开已有连接 |
@@ -223,7 +222,10 @@ chain_addr = "10.0.0.200:80"
 
 ---
 
-## 无 GUI 版本（`t5d`）
+## Web UI 版（`t5d`）
+
+纯 Rust 实现，不链接 WebView 与图形库，因此可以直接跑在服务器、容器或最小化发行版上。
+界面在浏览器里访问（默认关闭，需在配置中开启，见下文「Web 控制台」）。
 
 ```bash
 t5d -f /etc/cloudnproxy/config.toml -log debug
@@ -385,7 +387,7 @@ speed_urls = [                 # 下拉可选列表
 log_level = "info"
 log_file = ""                  # 留空 = 不写文件
 
-# ---- Web 控制台（无 GUI 版专用，默认关闭）----
+# ---- Web 控制台（t5d 专用，默认关闭）----
 [web]
 enabled = false                # 改成 true 并用浏览器访问 http://<IP>:10110/
 listen = "0.0.0.0:10110"
@@ -440,14 +442,14 @@ latency_ms = 28
 |---|---|---|---|
 | `CloudNProxy_x.y.z_x64-setup.exe` | Windows | ~1.9 MB | NSIS 安装包。含开始菜单项、卸载程序 |
 | `cloudnproxy.exe` | Windows | ~5.0 MB | 免安装绿色版，双击即可运行 |
-| `t5d.exe` | Windows | ~2.7 MB | 无 GUI 版本，命令行工具（含 Web 控制台） |
+| `t5d.exe` | Windows | ~2.7 MB | Web UI 版，命令行工具 + 浏览器控制台 |
 | `CloudNProxy_x.y.z_amd64.deb` | Linux | ~2.9 MB | Debian / Ubuntu 安装包。**webkit 等依赖由 apt 提供**，所以体积小 |
 | `CloudNProxy_x.y.z_amd64.AppImage` | Linux | ~78 MB | 便携版。把 WebKit / GTK 整套运行时打包进文件，拷到任意发行版直接运行，无需安装任何依赖 |
 | `cloudnproxy` | Linux | ~6.4 MB | 图形界面版裸二进制（要求系统已装 `libwebkit2gtk-4.1-0`） |
-| `t5d` | Linux | ~3.1 MB | 无 GUI 版裸二进制，**动态链接 glibc** |
-| `t5d-musl` | Linux | ~3.2 MB | 无 GUI 版**静态链接**，零动态依赖 |
+| `t5d` | Linux | ~3.1 MB | Web UI 版裸二进制，**动态链接 glibc** |
+| `t5d-musl` | Linux | ~3.2 MB | Web UI 版**静态链接**，零动态依赖 |
 
-> 体积以 v0.2.0 实测为准。`t5d` 相比 v0.1.x 增大约 0.7 MB，来自内建的 Web 控制台（HTTP 服务、argon2 口令散列、JWT 签名，以及编译期嵌入的界面资源）。
+> 体积以 v0.2.2 实测为准。`t5d` 相比 v0.1.x 增大约 0.7 MB，来自内建的 Web 控制台（HTTP 服务、argon2 口令散列、JWT 签名，以及编译期嵌入的界面资源）。
 
 ### 怎么选
 
@@ -492,7 +494,7 @@ latency_ms = 28
 cargo test -p t5-core --lib
 cargo test -p t5-daemon
 
-# 只编译无 GUI 版本
+# 只编译 Web UI 版
 cargo build --release -p t5-daemon      # 产物 target/release/t5d
 
 # 静态链接版（零动态依赖，可直接跑在 Alpine / BusyBox）
@@ -526,7 +528,7 @@ tauri build --bundles appimage,deb      # Linux
 
 节点表格的「延迟」「速度」表头可点击切换升降序；右上角下拉可按运营商过滤。
 
-### 无 GUI 版
+### Web UI 版
 
 ```bash
 t5d -f ./config.toml -log info
@@ -550,7 +552,7 @@ cloudnproxy/
 │            tunnel_pool,temp_proxy,netinfo,events,control}.rs
 ├── crates/t5-web/                   # Web 控制台（HTTP + JWT + SSE + 内嵌界面）
 │   └── src/{lib,auth,server,assets}.rs
-├── crates/t5-daemon/                # 无 GUI 版本 → t5d（内建 Web 控制台）
+├── crates/t5-daemon/                # Web UI 版 → t5d（内建 Web 控制台）
 ├── src-tauri/                       # 图形界面版
 │   ├── src/{lib,main,commands,tray}.rs
 │   └── {tauri.conf.json, capabilities/default.json}
@@ -574,7 +576,7 @@ cloudnproxy/
 | CPU | Intel Xeon E5-2680 v4 @ 2.40GHz ×2（**28 逻辑核心**） |
 | 内存 | 32 GB |
 | 系统 | Windows 11 专业版（10.0.26200） |
-| 被测版本 | `t5d` v0.2.1（无 GUI 版） |
+| 被测版本 | `t5d` v0.2.1（Web UI 版） |
 
 ### 测试方法
 
