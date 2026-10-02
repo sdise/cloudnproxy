@@ -11,13 +11,16 @@
 //! - `-f/--file <path>`  指定配置文件；省略时按平台标准目录查找
 //! - `-log/--log <level>` 标准输出日志级别，覆盖 config.toml 的 log_level
 //! - 日志文件由 config.toml 的 `log_file` 控制（留空则不落盘）
+//! - Web 控制台由 config.toml 的 `[web]` 段控制（默认关闭）
 
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Duration;
+use t5_core::events::Event;
 use t5_core::logbuf::{iso_time, level_name, LogLine, LogSink};
-use t5_core::{config::Config, Stats};
+use t5_core::{config::Config, Controller, EventBus, Stats};
+use tokio::sync::broadcast::error::RecvError;
 
 /// 与 Tauri 版共用同一配置目录，避免两个版本各存一份。
 const APP_DIR: &str = "dev.cloudnproxy.app";
@@ -38,6 +41,15 @@ CloudNProxy daemon — 把 T5 云代理节点转换为本地 SOCKS5 代理（无
   其余全部可调项都在 config.toml 中，包括监听地址端口、上游节点、
   FakeHost / X-T5-Auth、Chain 一级代理、隧道池、断线重连、自动切换，
   以及 log_level 与 log_file（log_file 留空表示日志不写入文件）。
+
+Web 控制台（可在浏览器里操作本程序）默认关闭，在 config.toml 中启用：
+
+  [web]
+  enabled = true
+  listen = \"0.0.0.0:10110\"
+
+  首次启动会生成随机初始密码并打印在日志中，首次登录后必须修改。
+  监听在非回环地址时请务必配合防火墙，并优先通过 HTTPS 反向代理访问。
 ";
 
 #[derive(Default)]
@@ -122,6 +134,19 @@ fn human(bytes: u64) -> String {
     }
 }
 
+/// 把一条日志写到标准输出。
+fn print_line(line: &LogLine) {
+    let mut out = std::io::stdout();
+    let _ = writeln!(
+        out,
+        "{} {:<5} {}",
+        iso_time(line.ts),
+        line.level,
+        line.msg
+    );
+    let _ = out.flush();
+}
+
 #[tokio::main]
 async fn main() -> ExitCode {
     let args = match parse_args() {
@@ -145,6 +170,9 @@ async fn main() -> ExitCode {
 
     // ---------- 日志 ----------
     let logs = LogSink::new(2000);
+    // 事件总线建立之前（读取配置阶段）的日志直接写标准输出
+    logs.set_emitter(|line: LogLine| print_line(&line));
+
     let level = args
         .log
         .clone()
@@ -152,21 +180,8 @@ async fn main() -> ExitCode {
         .unwrap_or_else(|| "info".to_string());
     logs.set_min_level(&level);
 
-    // 标准输出
-    logs.set_emitter(|line: LogLine| {
-        let mut out = std::io::stdout();
-        let _ = writeln!(
-            out,
-            "{} {:<5} {}",
-            iso_time(line.ts),
-            line.level,
-            line.msg
-        );
-        let _ = out.flush();
-    });
-
     // ---------- 配置 ----------
-    let mut cfg = if cfg_path.exists() {
+    let cfg = if cfg_path.exists() {
         match Config::load(&cfg_path) {
             Ok(c) => c,
             Err(e) => {
@@ -197,6 +212,36 @@ async fn main() -> ExitCode {
         }
     }
 
+    // ---------- 控制层 ----------
+    // 构造 Controller 时会接管日志的 emitter（改为发布到事件总线），
+    // 因此下面必须订阅总线才能继续输出标准输出，不能重复设置 emitter。
+    let stats = Stats::new();
+    let events = EventBus::new();
+    let ctrl = Controller::new(
+        cfg.clone(),
+        logs.clone(),
+        stats.clone(),
+        events.clone(),
+        cfg_path.clone(),
+    );
+
+    let mut bg_tasks: Vec<tokio::task::JoinHandle<()>> = Vec::new();
+
+    // 日志：事件总线 → 标准输出
+    {
+        let mut rx = events.subscribe();
+        bg_tasks.push(tokio::spawn(async move {
+            loop {
+                match rx.recv().await {
+                    Ok(Event::Log(line)) => print_line(&line),
+                    Ok(_) => {}
+                    Err(RecvError::Lagged(_)) => continue,
+                    Err(RecvError::Closed) => break,
+                }
+            }
+        }));
+    }
+
     logs.info(format!("CloudNProxy daemon {} 启动", t5_core::VERSION));
     logs.info(format!("配置文件: {}", cfg_path.display()));
     logs.info(format!("日志级别: {effective}"));
@@ -204,14 +249,10 @@ async fn main() -> ExitCode {
     // ---------- 启动引擎 ----------
     // 先让监听端口就绪，再做网络相关的准备工作：节点解析受上游 DNS 影响，
     // 若放在启动路径上会拖慢服务可用时间（甚至让健康检查误判为启动失败）。
-    let stats = Stats::new();
-    let engine = match t5_core::engine::start(cfg.clone(), logs.clone(), stats.clone()).await {
-        Ok(h) => h,
-        Err(e) => {
-            logs.error(format!("引擎启动失败: {e}"));
-            return ExitCode::from(1);
-        }
-    };
+    if let Err(e) = ctrl.start_engine().await {
+        logs.error(format!("引擎启动失败: {e}"));
+        return ExitCode::from(1);
+    }
 
     // ---------- 出站路径提示 ----------
     // 本机若开着 TUN 模式的代理软件，到节点的流量可能被接管，导致测速失真。
@@ -233,29 +274,23 @@ async fn main() -> ExitCode {
         }
     }
 
-    // 后台任务的句柄，退出时统一中止
-    let mut bg_tasks: Vec<tokio::task::JoinHandle<()>> = Vec::new();
+    // ---------- Web 控制台 ----------
+    // 失败只记录错误，不影响 SOCKS5 转发本身
+    if cfg.web.enabled {
+        match t5_web::start(ctrl.clone()).await {
+            Ok(_handle) => {}
+            Err(e) => logs.error(format!("Web 控制台启动失败：{e}")),
+        }
+    } else {
+        logs.info("Web 控制台未启用（config.toml 中 [web] enabled = true 可开启）");
+    }
 
     // ---------- 后台刷新节点列表 ----------
     if cfg.nodes.is_empty() && !cfg.resolve_domain.trim().is_empty() {
-        let client = t5_core::resolver::http_client();
-        let domain = cfg.resolve_domain.clone();
-        let mut snapshot = cfg.clone();
-        let path = cfg_path.clone();
-        let logs_bg = logs.clone();
+        let ctrl = ctrl.clone();
         bg_tasks.push(tokio::spawn(async move {
-            logs_bg.info(format!("后台解析节点域名 {domain} …（多源 DoH + 多地域 ECS）"));
-            let report = t5_core::resolver::resolve_domain(&client, &domain).await;
-            if report.ips.is_empty() {
-                logs_bg.warn("解析未获得任何 IP，可稍后重新解析");
-            } else {
-                snapshot.merge_node_ips(&report.ips);
-                let _ = snapshot.save(&path);
-                logs_bg.info(format!(
-                    "解析到 {} 个节点（来源 {}）",
-                    snapshot.nodes.len(),
-                    report.summary()
-                ));
+            if let Err(e) = ctrl.resolve_nodes(None).await {
+                ctrl.logs.warn(format!("后台解析未完成：{e}"));
             }
         }));
     }
@@ -298,7 +333,7 @@ async fn main() -> ExitCode {
                 logs.warn(format!("无法注册 SIGTERM: {e}"));
                 let _ = tokio::signal::ctrl_c().await;
                 logs.info("收到退出信号，正在停止 …");
-                engine.shutdown().await;
+                ctrl.stop_engine().await;
                 return ExitCode::SUCCESS;
             }
         };
@@ -319,7 +354,7 @@ async fn main() -> ExitCode {
     // 直接 exit 是刻意的：后台解析里的阻塞式 DNS 查询一旦开始就无法取消，
     // 运行时析构会一直等它返回，导致收到 SIGTERM 后进程迟迟不退出 ——
     // 在 systemd 下会被判定为 stop 超时，最终收到 SIGKILL。
-    let _ = tokio::time::timeout(Duration::from_secs(3), engine.shutdown()).await;
+    let _ = tokio::time::timeout(Duration::from_secs(3), ctrl.stop_engine()).await;
     for task in bg_tasks {
         task.abort();
     }

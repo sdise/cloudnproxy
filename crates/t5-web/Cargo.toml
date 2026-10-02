@@ -1,0 +1,19 @@
+[package]
+name = "t5-web"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "CloudNProxy Web 控制台：在浏览器中控制无 GUI 版本"
+
+[dependencies]
+t5-core = { path = "../t5-core" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+axum = { version = "0.8", features = ["json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+argon2 = "0.5"
+hmac = "0.12"
+sha2 = "0.10"
+base64 = "0.22"
+rand = "0.8"

@@ -94,6 +94,65 @@ impl Node {
     }
 }
 
+/// Web 控制台配置（无 GUI 版本专用）。
+///
+/// 默认**关闭**：把控制台暴露到网络是个安全决定，应当由使用者显式开启。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WebConfig {
+    /// 是否启用 Web 控制台
+    pub enabled: bool,
+    /// 监听地址。默认监听所有网卡，公网部署时请务必配合防火墙 / 反向代理。
+    pub listen: String,
+    /// 登录用户名
+    pub username: String,
+    /// argon2id 密码散列（PHC 字符串）。
+    ///
+    /// 留空表示尚未初始化，首次启动时会生成随机初始密码并输出到日志一次。
+    pub password_hash: String,
+    /// 是否必须先修改密码才能使用。首次初始化后为 `true`。
+    pub must_change_password: bool,
+    /// JWT 签名密钥。留空表示尚未初始化，首次启动时随机生成并写回配置
+    /// （持久化是为了让已签发的令牌在重启后仍然有效）。
+    pub jwt_secret: String,
+    /// 登录令牌有效期（小时）
+    pub token_ttl_hours: u64,
+}
+
+impl Default for WebConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            listen: "0.0.0.0:10110".to_string(),
+            username: "admin".to_string(),
+            password_hash: String::new(),
+            must_change_password: false,
+            jwt_secret: String::new(),
+            token_ttl_hours: 24,
+        }
+    }
+}
+
+impl WebConfig {
+    /// 把 `listen` 拆成 `(host, port)`，非法时回退到默认值。
+    pub fn listen_parts(&self) -> (String, u16) {
+        match self.listen.trim().rsplit_once(':') {
+            Some((h, p)) => match p.parse::<u16>() {
+                Ok(port) => (h.to_string(), port),
+                Err(_) => ("0.0.0.0".to_string(), 10110),
+            },
+            None => ("0.0.0.0".to_string(), 10110),
+        }
+    }
+
+    /// 是否绑定了非回环地址（即真的对外可达）。
+    pub fn exposed_to_network(&self) -> bool {
+        let (host, _) = self.listen_parts();
+        let h = host.trim();
+        !(h == "127.0.0.1" || h == "localhost" || h == "::1")
+    }
+}
+
 /// 应用全部可配置项。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -158,6 +217,9 @@ pub struct Config {
     /// 当前节点的 `ip:port`，与 `upstream` 保持一致
     pub current_node: String,
     pub nodes: Vec<Node>,
+
+    // ---- Web 控制台 ----
+    pub web: WebConfig,
 }
 
 impl Default for Config {
@@ -198,6 +260,8 @@ impl Default for Config {
 
             current_node: String::new(),
             nodes: Vec::new(),
+
+            web: WebConfig::default(),
         }
     }
 }

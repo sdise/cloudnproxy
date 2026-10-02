@@ -8,6 +8,37 @@
 </head>
 <body>
 
+<!-- 登录 / 首次改密：仅 Web 控制台模式显示，由 app.js 控制显隐 -->
+<div class="gate" id="authGate" hidden>
+  <form class="gate-card" id="loginForm" autocomplete="on">
+    <div class="gate-logo">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+        <path d="M12 2 4 6v6c0 5 3.4 9.4 8 10 4.6-.6 8-5 8-10V6z"/><path d="M9 12l2 2 4-4"/>
+      </svg>
+    </div>
+    <h2>CloudNProxy 控制台</h2>
+    <p class="gate-sub">请使用管理员账户登录</p>
+    <label class="fld" for="loginUser">用户名</label>
+    <input id="loginUser" value="admin" autocomplete="username">
+    <label class="fld" for="loginPass">密码</label>
+    <input id="loginPass" type="password" autocomplete="current-password">
+    <div class="gate-msg" id="loginMsg"></div>
+    <button class="btn primary gate-btn" type="submit">登录</button>
+    <p class="gate-note">初始密码在服务端首次启动时生成，打印于日志中。</p>
+  </form>
+
+  <form class="gate-card" id="pwdForm" hidden>
+    <h2>设置新密码</h2>
+    <p class="gate-sub">首次登录必须修改初始密码</p>
+    <label class="fld" for="pwdNew">新密码</label>
+    <input id="pwdNew" type="password" autocomplete="new-password" placeholder="至少 8 位，不能是纯数字">
+    <label class="fld" for="pwdConfirm">确认新密码</label>
+    <input id="pwdConfirm" type="password" autocomplete="new-password">
+    <div class="gate-msg" id="pwdMsg"></div>
+    <button class="btn primary gate-btn" type="submit">保存并继续</button>
+  </form>
+</div>
+
 <div class="app">
 
   <!-- 标题栏 -->
@@ -230,6 +261,9 @@
         <div class="card">
           <h3>关于</h3>
           <div class="row"><div><div class="lbl">当前版本</div><div class="desc" id="aboutVer">—</div></div></div>
+          <div class="row" id="rowLogout" hidden><div><div class="lbl">退出登录</div>
+            <div class="desc">清除本机保存的登录令牌，需重新输入密码</div></div>
+            <button class="btn sm" id="btnLogout">退出</button></div>
         </div>
       </section>
 

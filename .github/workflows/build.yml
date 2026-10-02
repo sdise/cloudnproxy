@@ -38,6 +38,9 @@ jobs:
       - name: 无 GUI 版本单元测试
         run: cargo test -p t5-daemon
 
+      - name: Web 控制台单元测试
+        run: cargo test -p t5-web
+
       - name: 安装 Node
         uses: actions/setup-node@v5
         with:
@@ -90,6 +93,10 @@ jobs:
           auto_switch = false
           log_level = "info"
           log_file = "/tmp/cnp/t5d.log"
+
+          [web]
+          enabled = true
+          listen = "127.0.0.1:10110"
           EOF
 
       - name: 启动并验证
@@ -130,6 +137,66 @@ jobs:
           curl -s -m 12 --socks5-hostname 127.0.0.1:11080 http://ip-api.com/json/ \
             && echo "代理链路可用" \
             || echo "::warning::代理连通性未通过（CI 网络环境限制，不判定构建失败）"
+
+          echo "=========== Web 控制台认证流程 ==========="
+          BASE=http://127.0.0.1:10110
+
+          code=$(curl -s -m 5 -o /dev/null -w '%{http_code}' -X POST "$BASE/api/rpc/get_status" \
+            -H 'Content-Type: application/json' -d '{}')
+          echo "① 未携带令牌访问业务接口：HTTP $code（期望 401）"
+          [ "$code" = "401" ] || { echo "::error::未鉴权的请求没有被拒绝"; exit 1; }
+
+          INIT_PWD=$(grep -o '初始密码：[^ ]*' /tmp/cnp/t5d.log | head -n1 | sed 's/初始密码：//')
+          if [ -z "$INIT_PWD" ]; then
+            echo "::error::未能从日志中取得初始密码"
+            cat /tmp/cnp/t5d.log
+            exit 1
+          fi
+          echo "② 已从日志取得随机初始密码：$INIT_PWD"
+
+          LOGIN=$(curl -s -m 5 -X POST "$BASE/api/auth/login" \
+            -H 'Content-Type: application/json' \
+            -d "{\"username\":\"admin\",\"password\":\"$INIT_PWD\"}")
+          TOKEN=$(echo "$LOGIN" | jq -r '.token // empty')
+          MUST=$(echo "$LOGIN" | jq -r '.must_change_password')
+          [ -n "$TOKEN" ] || { echo "::error::登录失败"; echo "$LOGIN"; exit 1; }
+          [ "$MUST" = "true" ] || { echo "::error::首次登录应当要求修改密码"; exit 1; }
+          echo "③ 登录成功，且标记为必须修改初始密码"
+
+          code=$(curl -s -m 5 -o /dev/null -w '%{http_code}' -X POST "$BASE/api/rpc/get_status" \
+            -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{}')
+          echo "④ 未改密即访问业务接口：HTTP $code（期望 403）"
+          [ "$code" = "403" ] || { echo "::error::未完成改密时不应放行业务接口"; exit 1; }
+
+          CHANGED=$(curl -s -m 5 -X POST "$BASE/api/auth/change-password" \
+            -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+            -d '{"new_password":"ci-smoke-password"}')
+          TOKEN2=$(echo "$CHANGED" | jq -r '.token // empty')
+          [ -n "$TOKEN2" ] || { echo "::error::修改密码失败"; echo "$CHANGED"; exit 1; }
+          echo "⑤ 初始密码已修改"
+
+          STATUS=$(curl -s -m 5 -X POST "$BASE/api/rpc/get_status" \
+            -H "Authorization: Bearer $TOKEN2" -H 'Content-Type: application/json' -d '{}')
+          echo "⑥ 改密后调用业务接口：$(echo "$STATUS" | jq -c '{running:.engine.running, nodes:.nodes, version:.version}')"
+          echo "$STATUS" | jq -e '.engine.running' >/dev/null \
+            || { echo "::error::业务接口返回异常"; echo "$STATUS"; exit 1; }
+
+          code=$(curl -s -m 5 -o /dev/null -w '%{http_code}' -X POST "$BASE/api/auth/login" \
+            -H 'Content-Type: application/json' \
+            -d "{\"username\":\"admin\",\"password\":\"$INIT_PWD\"}")
+          echo "⑦ 用旧密码登录：HTTP $code（期望 401）"
+          [ "$code" = "401" ] || { echo "::error::旧密码修改后仍然可用"; exit 1; }
+
+          code=$(curl -s -m 5 -o /dev/null -w '%{http_code}' "$BASE/")
+          echo "⑧ 静态界面首页：HTTP $code（期望 200）"
+          [ "$code" = "200" ] || { echo "::error::界面资源不可访问"; exit 1; }
+
+          code=$(curl -s -m 5 -o /dev/null -w '%{http_code}' -X POST "$BASE/api/rpc/set_autostart" \
+            -H "Authorization: Bearer $TOKEN2" -H 'Content-Type: application/json' -d '{"enabled":true}')
+          echo "⑨ Web 端调用宿主专属命令：HTTP $code（期望 400，应被明确拒绝）"
+          [ "$code" = "400" ] || { echo "::error::宿主专属命令未被拒绝"; exit 1; }
+
+          echo "Web 控制台认证与鉴权流程全部通过"
 
           echo "=========== 优雅停止 ==========="
           kill -TERM "$(cat /tmp/cnp/t5d.pid)" 2>/dev/null || true

@@ -11,4 +11,5 @@ path = "src/main.rs"
 
 [dependencies]
 t5-core = { path = "../t5-core" }
+t5-web = { path = "../t5-web" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "net", "signal"] }

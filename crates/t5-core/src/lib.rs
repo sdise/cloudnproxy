@@ -13,10 +13,14 @@
 //! - [`tunnel_pool`] 上游隧道预建与复用
 //! - [`temp_proxy`] 测速用的临时单节点 SOCKS5 出口
 //! - [`netinfo`]   出站路径探测（是否经过 TUN）
+//! - [`events`]    控制台事件总线（所有实时推送的唯一出处）
+//! - [`control`]   与前端无关的控制层，供 Tauri 与 Web 控制台共用
 
 pub mod bench;
 pub mod config;
+pub mod control;
 pub mod engine;
+pub mod events;
 pub mod logbuf;
 pub mod netinfo;
 pub mod outbound;
@@ -26,8 +30,10 @@ pub mod stats;
 pub mod temp_proxy;
 pub mod tunnel_pool;
 
-pub use config::{Config, Node};
+pub use config::{Config, Node, WebConfig};
+pub use control::{Controller, StatusPayload};
 pub use engine::{EngineHandle, EngineStatus};
+pub use events::{Event, EventBus};
 pub use logbuf::{LogLine, LogSink};
 pub use stats::{Stats, StatsSnapshot};
 

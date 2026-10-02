@@ -2,28 +2,19 @@
 //!
 //! 进程模型：UI 与转发引擎同进程。关闭主窗口只是隐藏，引擎继续常驻，
 //! 与托盘菜单共同取代了原先的 `start-t5-bg` / `stop-t5-bg` 脚本。
+//!
+//! 业务逻辑集中在 `t5_core::control::Controller`（与 Web 控制台共用同一份），
+//! 这里只负责三件事：注册插件、把事件总线桥接到前端、管理窗口生命周期。
 
 mod commands;
-mod state;
 mod tray;
 
-use serde::Serialize;
 use std::path::PathBuf;
 use std::time::Duration;
 use tauri::{Emitter, Manager, WindowEvent};
 use tauri_plugin_autostart::MacosLauncher;
-use t5_core::{Config, LogSink, Stats};
-
-/// 每秒推送给前端的实时统计（字节率为「上一秒增量」）。
-#[derive(Clone, Serialize)]
-struct StatsTick {
-    up_rate: u64,
-    down_rate: u64,
-    up_bytes: u64,
-    down_bytes: u64,
-    conns: i64,
-    sessions: u64,
-}
+use t5_core::{Config, Controller, EventBus, LogSink, Stats};
+use tokio::sync::broadcast::error::RecvError;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -54,24 +45,47 @@ pub fn run() {
 
             let logs = LogSink::new(2000);
             let stats = Stats::new();
+            let events = EventBus::new();
 
-            // 日志实时推送到前端（不落盘）
-            {
-                let h = handle.clone();
-                logs.set_emitter(move |line| {
-                    let _ = h.emit("log", &line);
-                });
-            }
+            let ctrl = Controller::new(
+                cfg,
+                logs.clone(),
+                stats.clone(),
+                events.clone(),
+                config_path.clone(),
+            );
+            app.manage(ctrl.clone());
 
             logs.info(format!("CloudNProxy {} 已启动", t5_core::VERSION));
             logs.info(format!("配置文件: {}", config_path.display()));
 
-            app.manage(state::AppState::new(
-                cfg,
-                logs.clone(),
-                stats.clone(),
-                config_path,
-            ));
+            // 事件总线 → 前端。
+            //
+            // 日志、统计、测速进度、状态变化全部从这一处转发，命令层不再各自
+            // `emit`，Web 控制台也订阅同一个总线 —— 两种前端因此天然一致。
+            {
+                let h = handle.clone();
+                let mut rx = events.subscribe();
+                tauri::async_runtime::spawn(async move {
+                    loop {
+                        match rx.recv().await {
+                            Ok(event) => {
+                                let name = event.name();
+                                // 前端 `listen(name, e => e.payload)` 拿到的应当是
+                                // 事件内容本身，因此这里剥掉 `{"type","payload"}` 外壳。
+                                let payload = serde_json::to_value(&event)
+                                    .ok()
+                                    .and_then(|v| v.get("payload").cloned())
+                                    .unwrap_or(serde_json::Value::Null);
+                                let _ = h.emit(name, payload);
+                            }
+                            // 前端短暂卡顿导致的积压丢帧：跳过即可，统计是增量值
+                            Err(RecvError::Lagged(_)) => continue,
+                            Err(RecvError::Closed) => break,
+                        }
+                    }
+                });
+            }
 
             tray::build(&handle)?;
 
@@ -83,39 +97,16 @@ pub fn run() {
                 }
             }
 
-            // 每秒推送统计
-            {
-                let h = handle.clone();
-                let s = stats.clone();
-                tauri::async_runtime::spawn(async move {
-                    let mut last_up = 0u64;
-                    let mut last_down = 0u64;
-                    loop {
-                        tokio::time::sleep(Duration::from_secs(1)).await;
-                        let snap = s.snapshot();
-                        let tick = StatsTick {
-                            up_rate: snap.up_bytes.saturating_sub(last_up),
-                            down_rate: snap.down_bytes.saturating_sub(last_down),
-                            up_bytes: snap.up_bytes,
-                            down_bytes: snap.down_bytes,
-                            conns: snap.conns,
-                            sessions: snap.sessions,
-                        };
-                        last_up = snap.up_bytes;
-                        last_down = snap.down_bytes;
-                        let _ = h.emit("stats", &tick);
-                    }
-                });
-            }
+            // 每秒推送一次统计（无订阅者时自动静默）
+            ctrl.spawn_stats_ticker();
 
             // 自启时自动建立代理
             if auto_connect {
-                let h = handle.clone();
+                let ctrl = ctrl.clone();
                 tauri::async_runtime::spawn(async move {
                     tokio::time::sleep(Duration::from_millis(400)).await;
-                    let st = h.state::<state::AppState>();
-                    if let Err(e) = state::start_engine(st.inner()).await {
-                        st.logs.error(format!("自动启动代理失败: {e}"));
+                    if let Err(e) = ctrl.start_engine().await {
+                        ctrl.logs.error(format!("自动启动代理失败: {e}"));
                     }
                 });
             }
@@ -129,7 +120,7 @@ pub fn run() {
                 }
                 let keep = window
                     .app_handle()
-                    .state::<state::AppState>()
+                    .state::<Controller>()
                     .cfg
                     .try_lock()
                     .map(|c| c.close_to_tray)

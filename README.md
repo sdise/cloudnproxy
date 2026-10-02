@@ -44,6 +44,7 @@
 | **出站网卡绑定** | 概览页可指定本程序从哪张网卡出去，**内建绕过 TUN**，无需修改代理软件的设置 |
 | **出站路径提示** | 显示到上游节点的实际出站网卡，并提示流量是否被 TUN 模式的代理软件接管 |
 | **托盘** | 显示窗口、启动/暂停、测速选优、复制 SOCKS5 地址、退出 |
+| **Web 控制台** | 无 GUI 版可在浏览器里操作（默认关闭）：与桌面版**同一套界面**，JWT 登录，首次登录强制改密 |
 | **自启** | Windows 注册表 Run 值 · Linux XDG autostart |
 | **持久化** | 配置与测速结果写入 `config.toml` |
 | **节点热切换** | 切换当前节点不重启引擎、不断开已有连接 |
@@ -187,6 +188,82 @@ RestartSec=3
 WantedBy=multi-user.target
 ```
 
+### Web 控制台（在浏览器里管理）
+
+`t5d` 内建了一个 Web 控制台，界面与桌面版**完全相同** —— 复用同一份 `ui/` 资源，编译期嵌入二进制，部署时不需要额外拷贝静态目录。适合装在 VPS / 服务器上用浏览器管理。
+
+**默认关闭**：把控制台暴露到网络是个安全决定，需要显式开启。
+
+```toml
+[web]
+enabled = true
+listen = "0.0.0.0:10110"     # 只在本机用就写 127.0.0.1:10110
+```
+
+也可以用一份最小配置直接跑起来（其余字段自动取默认值）：
+
+```bash
+mkdir -p /etc/cloudnproxy
+cat > /etc/cloudnproxy/config.toml <<'EOF'
+[web]
+enabled = true
+listen = "0.0.0.0:10110"
+EOF
+t5d -f /etc/cloudnproxy/config.toml
+```
+
+**首次启动**会生成随机初始密码，并**只打印这一次**：
+
+```text
+WARN  Web 控制台已初始化，以下是初始凭据（仅显示这一次）
+WARN    用户名：admin
+WARN    初始密码：k7Rm-2pQx-9tBv-nZ4w
+WARN    首次登录后必须修改密码；请立即妥善保存或完成改密
+```
+
+浏览器打开 `http://<服务器IP>:10110/`，用该密码登录后会**强制跳转改密页**，改完才能进入控制台。
+
+#### 认证机制
+
+| 项 | 实现 |
+|---|---|
+| 口令存储 | argon2id 散列（PHC 字符串）写进 `config.toml`，不保存明文 |
+| 登录令牌 | 自实现的 **HS256 JWT**，默认 24 小时有效（`token_ttl_hours` 可调），密钥持久化以便重启后令牌仍有效 |
+| 首次改密 | 令牌携带 `pwd=true`，未改密前除改密接口外**一律返回 403** |
+| 暴力破解 | 按来源 IP 计数，连续 5 次失败锁定 60 秒，之后按次数翻倍（上限 15 分钟） |
+| 代理头信任 | 仅当直连方是回环/私网地址时才采信 `X-Forwarded-For`，防止伪造该头绕过限速 |
+| 接口鉴权 | 除登录、改密、静态资源外的全部接口都要求 `Authorization: Bearer <JWT>` |
+
+**接口约定**：`POST /api/rpc/<命令名>`，命令名与桌面版的 `invoke()` 一一对应；实时推送走 SSE（`GET /api/events`），每帧形如 `{"type":"…","payload":{…}}`。
+
+#### ⚠️ 公网部署安全提示
+
+控制台本身是**明文 HTTP**，密码与令牌在传输中不加密。对公网暴露时请至少做到一条：
+
+1. 用防火墙 / 安全组限制来源 IP；
+2. 或（推荐）套一层 HTTPS 反向代理：
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:10110;
+    proxy_set_header X-Forwarded-For $remote_addr;   # 让限速按真实来源 IP 计数
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_buffering off;                              # SSE 必须关闭缓冲
+}
+```
+
+`proxy_http_version 1.1` 与 `proxy_buffering off` 是必须的，否则日志和速率推送会被缓冲住不动。
+
+#### Web 端做不到的事
+
+| 命令 | 原因 |
+|---|---|
+| `set_autostart` | 开机自启属于宿主机的服务管理（systemd），不在本进程能改的范围内；界面会隐藏该开关 |
+| `open_config_dir` | 打不开服务器上的文件管理器；界面会隐藏该按钮 |
+
+> 控制台权限只覆盖「管理这个代理进程」，**不等于给 SOCKS5 加了认证** —— SOCKS5 入站依然不校验凭据。
+
 ---
 
 ## 配置文件
@@ -236,6 +313,16 @@ speed_urls = [                 # 下拉可选列表
 log_level = "info"
 log_file = ""                  # 留空 = 不写文件
 
+# ---- Web 控制台（无 GUI 版专用，默认关闭）----
+[web]
+enabled = false                # 改成 true 并用浏览器访问 http://<IP>:10110/
+listen = "0.0.0.0:10110"
+username = "admin"
+password_hash = ""             # 留空 = 首次启动生成随机初始密码并打印到日志
+must_change_password = false   # 由程序自己维护：生成初始密码后置 true
+jwt_secret = ""                # 留空 = 首次启动随机生成并写回
+token_ttl_hours = 24
+
 # ---- 应用行为 ----
 autostart = false
 autostart_connect = true
@@ -259,10 +346,10 @@ latency_ms = 28
 **本地无需 Rust 环境**——编译全部在 GitHub Actions 完成。推送后工作流按以下顺序执行：
 
 1. `check` —— `t5-core` / `t5-daemon` 单元测试 + `cargo check --workspace`
-2. `smoke` —— 真正启动 `t5d`，校验端口秒级就绪、标准输出、日志文件、SIGTERM 优雅退出，并对代理链路做软检查
+2. `smoke` —— 真正启动 `t5d`，校验端口秒级就绪、标准输出、日志文件、**Web 控制台完整认证流程**（未鉴权被拒 → 用日志中的随机密码登录 → 强制改密 → 改密后放行 → 旧密码失效 → 静态界面可访问），以及 SIGTERM 优雅退出，并对代理链路做软检查
 3. `build` —— Windows（NSIS）与 Linux（AppImage / deb）
 4. `musl` —— 静态链接版 `t5d-musl`，并在 **alpine 容器**中实测可运行
-5. `release` —— 打 tag（如 `v0.1.1`）时自动发布 Release
+5. `release` —— 打 tag（如 `v0.2.0`）时自动发布 Release
 
 产物 artifact：
 
@@ -380,11 +467,14 @@ curl --socks5-hostname 127.0.0.1:10801 http://ip-api.com/json/
 ```
 cloudnproxy/
 ├── Cargo.toml                       # workspace
-├── crates/t5-core/                  # 转发引擎（可独立编译、含单元测试）
-│   └── src/{config,logbuf,stats,socks5,outbound,engine,resolver,bench,tunnel_pool}.rs
-├── crates/t5-daemon/                # 无 GUI 版本 → t5d
+├── crates/t5-core/                  # 引擎 + 控制层（可独立编译、含单元测试）
+│   └── src/{config,logbuf,stats,socks5,outbound,engine,resolver,bench,
+│            tunnel_pool,temp_proxy,netinfo,events,control}.rs
+├── crates/t5-web/                   # Web 控制台（HTTP + JWT + SSE + 内嵌界面）
+│   └── src/{lib,auth,server,assets}.rs
+├── crates/t5-daemon/                # 无 GUI 版本 → t5d（内建 Web 控制台）
 ├── src-tauri/                       # 图形界面版
-│   ├── src/{lib,main,state,commands,tray}.rs
+│   ├── src/{lib,main,commands,tray}.rs
 │   └── {tauri.conf.json, capabilities/default.json}
 ├── ui/                              # 前端（静态 HTML/CSS/JS，无打包器）
 ├── scripts/gen-icon.js              # 生成图标源 PNG（零依赖）
@@ -401,7 +491,9 @@ cloudnproxy/
 | 项 | 说明 |
 |---|---|
 | 仅 TCP | 未实现 SOCKS5 的 UDP ASSOCIATE，QUIC / UDP 流量不可代理 |
-| 无入站认证 | SOCKS5 握手不校验凭据；默认只监听 `127.0.0.1`，开启 `allow_lan` 前请自行评估风险 |
+| 无入站认证 | SOCKS5 握手不校验凭据；默认只监听 `127.0.0.1`，开启 `allow_lan` 前请自行评估风险。控制台登录**不会**给 SOCKS5 加上认证 |
+| Web 控制台默认关闭 | 需在 `config.toml` 的 `[web]` 里显式开启 |
+| Web 控制台无内建 TLS | 监听非回环地址时是明文 HTTP，公网部署请套 HTTPS 反向代理并限制来源 |
 | 隧道池粒度 | 仅按「上游节点 + 目标」缓存，且只缓存未传数据的干净隧道，命中率取决于访问目标是否集中 |
 | 自动切换依据 | 使用节点库中最近一次测速结果评分；未测速的节点不参与 |
 | 日志时间戳 | 文件与标准输出使用 **UTC** 时间 |

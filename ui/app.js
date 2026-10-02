@@ -1,12 +1,127 @@
 /* CloudNProxy 前端逻辑
- * 通过 window.__TAURI__ 的全局对象调用 Rust 侧命令；在普通浏览器中打开时
- * 自动降级为演示数据，方便离线预览界面。 */
+ *
+ * 同一份代码服务三种运行环境：
+ *  - 桌面版：经 window.__TAURI__ 调用 Rust 命令，用 Tauri 事件接收推送；
+ *  - Web 控制台（t5-daemon 内建）：命令走 POST /api/rpc/<cmd>，推送走 SSE，
+ *    并带登录 / 首次改密流程；
+ *  - 直接双击打开的本地文件：降级为演示数据，便于离线预览界面。
+ */
 (function () {
   'use strict';
 
-  const hasTauri = typeof window.__TAURI__ !== 'undefined' && window.__TAURI__.core;
-  const invoke = hasTauri ? window.__TAURI__.core.invoke : mockInvoke;
-  const listen = hasTauri ? window.__TAURI__.event.listen : async () => () => {};
+  const isTauri = typeof window.__TAURI__ !== 'undefined' && !!window.__TAURI__.core;
+  // 经 http(s) 打开且不是 Tauri，即运行在 Web 控制台里
+  const isWeb = !isTauri && location.protocol !== 'file:';
+
+  const TOKEN_KEY = 'cnp.token';
+  const SESSION = {
+    token: isWeb ? localStorage.getItem(TOKEN_KEY) || '' : '',
+    username: 'admin',
+  };
+
+  /** Web 控制台：把一个命令映射成一次 HTTP 调用。 */
+  async function httpInvoke(cmd, args) {
+    const res = await fetch('/api/rpc/' + encodeURIComponent(cmd), {
+      method: 'POST',
+      headers: Object.assign(
+        { 'Content-Type': 'application/json' },
+        SESSION.token ? { Authorization: 'Bearer ' + SESSION.token } : {}
+      ),
+      body: JSON.stringify(args || {}),
+    });
+
+    if (res.status === 401) {
+      SESSION.token = '';
+      localStorage.removeItem(TOKEN_KEY);
+      showGate('login');
+      throw new Error('登录已过期，请重新登录');
+    }
+    if (res.status === 403) {
+      const body = await res.json().catch(() => ({}));
+      if (body.code === 'password_change_required') {
+        showGate('password');
+        throw new Error(body.error || '请先修改初始密码');
+      }
+    }
+    if (!res.ok) {
+      let msg = 'HTTP ' + res.status;
+      try { msg = (await res.json()).error || msg; } catch (e) { /* 响应体不是 JSON */ }
+      throw new Error(msg);
+    }
+    return res.json();
+  }
+
+  const invoke = isTauri
+    ? window.__TAURI__.core.invoke
+    : (isWeb ? httpInvoke : mockInvoke);
+
+  /* ---------------- 事件订阅 ---------------- */
+
+  const eventHandlers = new Map();
+
+  function dispatchWebEvent(evt) {
+    const list = eventHandlers.get(evt.type);
+    if (!list) return;
+    list.forEach((fn) => {
+      try { fn({ payload: evt.payload }); } catch (e) { /* 单个处理器出错不影响其它 */ }
+    });
+  }
+
+  /** Web 控制台：用 SSE 接收推送，断线自动重连。 */
+  function listenViaSSE() {
+    let stopped = false;
+    (async () => {
+      while (!stopped) {
+        try {
+          const res = await fetch('/api/events', {
+            headers: SESSION.token ? { Authorization: 'Bearer ' + SESSION.token } : {},
+          });
+          if (res.status === 401) {
+            SESSION.token = '';
+            localStorage.removeItem(TOKEN_KEY);
+            showGate('login');
+            return;
+          }
+          if (!res.ok || !res.body) throw new Error('SSE HTTP ' + res.status);
+
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          let buf = '';
+          for (;;) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buf += decoder.decode(value, { stream: true });
+            let idx;
+            while ((idx = buf.indexOf('\n\n')) >= 0) {
+              const frame = buf.slice(0, idx);
+              buf = buf.slice(idx + 2);
+              for (const line of frame.split('\n')) {
+                if (!line.startsWith('data:')) continue;
+                const raw = line.slice(5).trim();
+                if (!raw) continue;
+                try { dispatchWebEvent(JSON.parse(raw)); } catch (e) { /* 忽略坏帧 */ }
+              }
+            }
+          }
+        } catch (e) { /* 网络中断：稍后重连 */ }
+        if (stopped) break;
+        await new Promise((r) => setTimeout(r, 1500));
+      }
+    })();
+    return () => { stopped = true; };
+  }
+
+  async function listen(name, cb) {
+    if (isTauri) return window.__TAURI__.event.listen(name, cb);
+    if (!isWeb) return () => {};
+    if (!eventHandlers.has(name)) eventHandlers.set(name, []);
+    eventHandlers.get(name).push(cb);
+    return () => {
+      const list = eventHandlers.get(name) || [];
+      const i = list.indexOf(cb);
+      if (i >= 0) list.splice(i, 1);
+    };
+  }
 
   const $ = (id) => document.getElementById(id);
   const LEVELS = { TRACE: 0, DEBUG: 1, INFO: 2, WARN: 3, ERROR: 4 };
@@ -14,6 +129,7 @@
   const S = {
     cfg: null,
     cfgPath: '',
+    version: '',
     status: { running: false, addr: '', upstream: '', chain: '' },
     egress: null,
     logs: [],
@@ -652,7 +768,10 @@
     });
   }
 
+  let eventsBound = false;
   async function bindEvents() {
+    if (eventsBound) return;
+    eventsBound = true;
     await listen('stats', (e) => onStats(e.payload));
     await listen('log', (e) => {
       S.logs.push(e.payload);
@@ -683,18 +802,148 @@
     await listen('tray-toggle', togglePower);
     await listen('tray-bench', benchAll);
     await listen('tray-copy', copySocks);
+
+    // Web 控制台用 SSE 接收推送；处理器已注册完毕，此处才建立连接
+    if (isWeb) listenViaSSE();
   }
+
+  /* ---------------- 登录（仅 Web 控制台） ---------------- */
+
+  function showGate(which) {
+    if (!isWeb) return;
+    const gate = $('authGate');
+    if (!gate) return;
+    gate.hidden = false;
+    $('loginForm').hidden = which !== 'login';
+    $('pwdForm').hidden = which !== 'password';
+    document.body.classList.add('gated');
+    setTimeout(() => {
+      const el = which === 'login' ? $('loginUser') : $('pwdNew');
+      if (el) el.focus();
+    }, 30);
+  }
+
+  function hideGate() {
+    const gate = $('authGate');
+    if (gate) gate.hidden = true;
+    document.body.classList.remove('gated');
+  }
+
+  async function doLogin(e) {
+    if (e) e.preventDefault();
+    const msg = $('loginMsg');
+    msg.textContent = '';
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: $('loginUser').value.trim(),
+          password: $('loginPass').value,
+        }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        msg.textContent = body.error || ('登录失败（HTTP ' + res.status + '）');
+        return;
+      }
+      SESSION.token = body.token;
+      SESSION.username = body.username || 'admin';
+      localStorage.setItem(TOKEN_KEY, body.token);
+      $('loginPass').value = '';
+      if (body.must_change_password) { showGate('password'); return; }
+      hideGate();
+      await boot();
+    } catch (err) {
+      msg.textContent = '无法连接服务：' + err.message;
+    }
+  }
+
+  async function doChangePassword(e) {
+    if (e) e.preventDefault();
+    const msg = $('pwdMsg');
+    msg.textContent = '';
+    const a = $('pwdNew').value;
+    const b = $('pwdConfirm').value;
+    if (a !== b) { msg.textContent = '两次输入的密码不一致'; return; }
+
+    try {
+      const res = await fetch('/api/auth/change-password', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer ' + SESSION.token,
+        },
+        body: JSON.stringify({ new_password: a }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) { msg.textContent = body.error || '修改失败'; return; }
+
+      SESSION.token = body.token;
+      localStorage.setItem(TOKEN_KEY, body.token);
+      $('pwdNew').value = '';
+      $('pwdConfirm').value = '';
+      toast('密码已更新');
+      hideGate();
+      await boot();
+    } catch (err) {
+      msg.textContent = '请求失败：' + err.message;
+    }
+  }
+
+  /** Web 控制台管不到宿主进程的自启注册，也打不开服务器上的目录。 */
+  function applyRuntimeMode() {
+    if (!isWeb) return;
+    const autoRow = $('swAutostart') ? $('swAutostart').closest('.row') : null;
+    if (autoRow) autoRow.hidden = true;
+    const dirBtn = $('btnOpenDir');
+    if (dirBtn) dirBtn.hidden = true;
+    const logoutRow = $('rowLogout');
+    if (logoutRow) logoutRow.hidden = false;
+    const tip = document.querySelector('.swtip');
+    if (tip) tip.innerHTML = '关闭浏览器<br>不影响代理运行';
+  }
+
+  /* ---------------- 启动 ---------------- */
 
   async function init() {
     bind();
+    applyRuntimeMode();
+
+    if (isWeb) {
+      $('loginForm').addEventListener('submit', doLogin);
+      $('pwdForm').addEventListener('submit', doChangePassword);
+      $('btnLogout').addEventListener('click', () => {
+        SESSION.token = '';
+        localStorage.removeItem(TOKEN_KEY);
+        showGate('login');
+      });
+
+      try {
+        const st = await fetch('/api/auth/state').then((r) => r.json());
+        if (st.username) $('loginUser').value = st.username;
+        if (st.version) S.version = st.version;
+      } catch (e) { /* 服务不可达时由登录表单给出提示 */ }
+
+      if (!SESSION.token) { showGate('login'); return; }
+    }
+
+    await boot();
+  }
+
+  /** 登录完成（或桌面版启动）后加载数据并建立订阅。 */
+  async function boot() {
     try {
       const st = await invoke('get_status');
       S.status = st.engine || { running: false };
       S.egress = st.egress || null;
       S.cfgPath = st.config_path || '';
+      S.version = st.version || S.version;
       S.cfg = await invoke('get_config');
       S.logs = (await invoke('get_logs')) || [];
     } catch (e) {
+      // 令牌失效时 httpInvoke 已经弹出登录页，这里不要再刷一遍界面
+      if (isWeb && /登录/.test(String(e && e.message))) return;
       S.cfg = { nodes: [] };
     }
 
@@ -719,7 +968,9 @@
       $('swAutostart').classList.toggle('on', !!auto);
     } catch (e) { /* 忽略 */ }
 
-    $('aboutVer').textContent = 'CloudNProxy v0.1.1 · Rust + Tauri v2';
+    const mode = isTauri ? '桌面版 · Tauri v2' : (isWeb ? 'Web 控制台' : '界面预览');
+    $('aboutVer').textContent =
+      'CloudNProxy v' + (S.version || '0.2.0') + ' · Rust · ' + mode;
     window.addEventListener('resize', drawChart);
   }
 
