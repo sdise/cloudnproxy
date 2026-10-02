@@ -17,7 +17,7 @@ jobs:
     name: 编译检查与单元测试
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: 安装 Linux 依赖
         run: |
@@ -39,7 +39,7 @@ jobs:
         run: cargo test -p t5-daemon
 
       - name: 安装 Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 20
 
@@ -61,7 +61,7 @@ jobs:
     needs: check
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: 安装 Rust
         uses: dtolnay/rust-toolchain@stable
@@ -133,7 +133,7 @@ jobs:
 
       - name: 上传测试日志
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: daemon-smoke-logs
           path: /tmp/cnp/*.log
@@ -155,7 +155,7 @@ jobs:
             bundles: appimage,deb
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: 安装 Linux 依赖
         if: runner.os == 'Linux'
@@ -172,7 +172,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: 安装 Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 20
 
@@ -192,7 +192,7 @@ jobs:
         run: cargo build --release -p t5-daemon
 
       - name: 上传构建产物
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: cloudnproxy-${{ matrix.name }}
           if-no-files-found: ignore
@@ -215,7 +215,7 @@ jobs:
       contents: write
     steps:
       - name: 下载全部构建产物
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           path: artifacts
           merge-multiple: true

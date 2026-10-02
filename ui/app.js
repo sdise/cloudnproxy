@@ -585,7 +585,7 @@
       $('swAutostart').classList.toggle('on', !!auto);
     } catch (e) { /* 忽略 */ }
 
-    $('aboutVer').textContent = 'CloudNProxy v1.0.0 · Rust + Tauri v2';
+    $('aboutVer').textContent = 'CloudNProxy v0.1.0 · Rust + Tauri v2';
     window.addEventListener('resize', drawChart);
   }
 

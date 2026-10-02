@@ -149,7 +149,7 @@ latency_ms = 28
 1. `check` —— `t5-core` / `t5-daemon` 单元测试 + `cargo check --workspace`
 2. `smoke` —— 真正启动 `t5d`，校验端口监听、标准输出、日志文件、SIGTERM 优雅退出，并对代理链路做软检查
 3. `build` —— Windows（NSIS）与 Linux（AppImage / deb）
-4. `release` —— 打 tag（如 `v1.0.0`）时自动发布 Release
+4. `release` —— 打 tag（如 `v0.1.0`）时自动发布 Release
 
 产物：
 
