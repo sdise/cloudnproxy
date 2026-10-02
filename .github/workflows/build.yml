@@ -199,11 +199,18 @@ jobs:
           echo "Web 控制台认证与鉴权流程全部通过"
 
           echo "=========== SSE 实时推送 ==========="
-          # 前端速率图依赖 stats 事件；daemon 若忘记启动推送循环，这里会暴露出来
-          if timeout 6 curl -sN -H "Authorization: Bearer $TOKEN2" "$BASE/api/events" | grep -m1 -o '"type":"stats"' >/dev/null; then
+          # 前端速率图依赖 stats 事件；daemon 若忘记启动推送循环，这里会暴露。
+          # 不要用管道退出码判断：grep 命中后会立即退出，curl 收到 SIGPIPE 返回
+          # 141，在 set -o pipefail 下会被误判成失败。先把响应收进变量再判断。
+          SSE=$(timeout 6 curl -sN -H "Authorization: Bearer $TOKEN2" "$BASE/api/events" 2>/dev/null || true)
+          if printf '%s' "$SSE" | grep -q '"type":"stats"'; then
             echo "已在 SSE 流中收到 stats 事件"
+            printf '%s\n' "$SSE" | grep -o '"type":"[a-z-]*"' | sort -u | head -n 5
           else
             echo "::error::6 秒内未收到 stats 事件，统计推送未工作"
+            echo "----------- 实际收到的内容（前 400 字节）-----------"
+            printf '%s' "$SSE" | head -c 400
+            echo
             exit 1
           fi
 
