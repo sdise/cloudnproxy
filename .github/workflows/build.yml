@@ -245,17 +245,20 @@ jobs:
       - name: 构建
         run: cargo build --release --target x86_64-unknown-linux-musl -p t5-daemon
 
+      # 注意：static-pie 二进制在 ldd 下显示为 "statically linked"，
+      # 完全静态显示为 "not a dynamic executable"，因此统一用 readelf 判断
+      # 是否存在 NEEDED（动态依赖）条目，两种表述都能正确识别。
       - name: 验证零动态依赖
         run: |
           BIN=target/x86_64-unknown-linux-musl/release/t5d
           file "$BIN"
-          if ldd "$BIN" 2>&1 | grep -q "not a dynamic executable"; then
-            echo "已确认零动态依赖"
-          else
+          echo "ldd: $(ldd "$BIN" 2>&1 || true)"
+          if readelf -d "$BIN" 2>/dev/null | grep -q '(NEEDED)'; then
             echo "::error::仍存在动态依赖，静态链接未生效"
-            ldd "$BIN" || true
+            readelf -d "$BIN" | grep '(NEEDED)' || true
             exit 1
           fi
+          echo "已确认零动态依赖（不存在任何 NEEDED 条目）"
 
       - name: 在 alpine 容器中验证可运行
         run: |
