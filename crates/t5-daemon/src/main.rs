@@ -233,6 +233,9 @@ async fn main() -> ExitCode {
         }
     }
 
+    // 后台任务的句柄，退出时统一中止
+    let mut bg_tasks: Vec<tokio::task::JoinHandle<()>> = Vec::new();
+
     // ---------- 后台刷新节点列表 ----------
     if cfg.nodes.is_empty() && !cfg.resolve_domain.trim().is_empty() {
         let client = t5_core::resolver::http_client();
@@ -240,7 +243,7 @@ async fn main() -> ExitCode {
         let mut snapshot = cfg.clone();
         let path = cfg_path.clone();
         let logs_bg = logs.clone();
-        tokio::spawn(async move {
+        bg_tasks.push(tokio::spawn(async move {
             logs_bg.info(format!("后台解析节点域名 {domain} …（多源 DoH + 多地域 ECS）"));
             let report = t5_core::resolver::resolve_domain(&client, &domain).await;
             if report.ips.is_empty() {
@@ -254,14 +257,14 @@ async fn main() -> ExitCode {
                     report.summary()
                 ));
             }
-        });
+        }));
     }
 
     // 每分钟输出一次统计，便于观察
     {
         let stats = stats.clone();
         let logs = logs.clone();
-        tokio::spawn(async move {
+        bg_tasks.push(tokio::spawn(async move {
             let mut last_up = 0u64;
             let mut last_down = 0u64;
             loop {
@@ -279,7 +282,7 @@ async fn main() -> ExitCode {
                     human(s.up_bytes + s.down_bytes)
                 ));
             }
-        });
+        }));
     }
 
     logs.info("SOCKS5 已就绪，按 Ctrl+C 停止");
@@ -310,8 +313,18 @@ async fn main() -> ExitCode {
     }
 
     logs.info("收到退出信号，正在停止 …");
-    engine.shutdown().await;
-    ExitCode::SUCCESS
+
+    // 引擎先停，给它一个有限的窗口；随后中止后台任务并直接结束进程。
+    //
+    // 直接 exit 是刻意的：后台解析里的阻塞式 DNS 查询一旦开始就无法取消，
+    // 运行时析构会一直等它返回，导致收到 SIGTERM 后进程迟迟不退出 ——
+    // 在 systemd 下会被判定为 stop 超时，最终收到 SIGKILL。
+    let _ = tokio::time::timeout(Duration::from_secs(3), engine.shutdown()).await;
+    for task in bg_tasks {
+        task.abort();
+    }
+    logs.info("已停止");
+    std::process::exit(0);
 }
 
 #[cfg(test)]
