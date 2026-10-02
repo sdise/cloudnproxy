@@ -226,11 +226,13 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: 下载全部构建产物
+      # 只取构建产物；pattern 会把冒烟测试日志（daemon-smoke-logs）排除在外
+      - name: 下载构建产物
         uses: actions/download-artifact@v5
         with:
           path: artifacts
           merge-multiple: true
+          pattern: cloudnproxy-*
 
       - name: 创建 Release
         uses: softprops/action-gh-release@v2
