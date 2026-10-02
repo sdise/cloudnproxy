@@ -102,9 +102,15 @@ impl Event {
 }
 
 /// 事件总线句柄，克隆成本极低，可在任意任务中发布。
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct EventBus {
     tx: broadcast::Sender<Event>,
+}
+
+impl Default for EventBus {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl EventBus {
