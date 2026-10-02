@@ -147,17 +147,61 @@ latency_ms = 28
 **本地无需 Rust 环境**——编译全部在 GitHub Actions 完成。推送后工作流按以下顺序执行：
 
 1. `check` —— `t5-core` / `t5-daemon` 单元测试 + `cargo check --workspace`
-2. `smoke` —— 真正启动 `t5d`，校验端口监听、标准输出、日志文件、SIGTERM 优雅退出，并对代理链路做软检查
+2. `smoke` —— 真正启动 `t5d`，校验端口秒级就绪、标准输出、日志文件、SIGTERM 优雅退出，并对代理链路做软检查
 3. `build` —— Windows（NSIS）与 Linux（AppImage / deb）
-4. `release` —— 打 tag（如 `v0.1.0`）时自动发布 Release
+4. `musl` —— 静态链接版 `t5d-musl`，并在 **alpine 容器**中实测可运行
+5. `release` —— 打 tag（如 `v0.1.1`）时自动发布 Release
 
-产物：
+产物 artifact：
 
 | Artifact | 内容 |
 |---|---|
 | `cloudnproxy-windows-x64` | NSIS 安装包、`cloudnproxy.exe`、`t5d.exe` |
 | `cloudnproxy-linux-x64` | `.AppImage`、`.deb`、`cloudnproxy`、`t5d` |
+| `cloudnproxy-linux-musl` | `t5d-musl` |
 | `daemon-smoke-logs` | 冒烟测试的 stdout 与日志文件 |
+
+---
+
+## 发行版文件说明
+
+| 文件 | 平台 | 体积 | 说明 |
+|---|---|---|---|
+| `CloudNProxy_x.y.z_x64-setup.exe` | Windows | ~1.9 MB | NSIS 安装包。含开始菜单项、卸载程序 |
+| `cloudnproxy.exe` | Windows | ~4.9 MB | 免安装绿色版，双击即可运行 |
+| `t5d.exe` | Windows | ~2.0 MB | 无 GUI 版本，命令行工具 |
+| `CloudNProxy_x.y.z_amd64.deb` | Linux | ~2.8 MB | Debian / Ubuntu 安装包。**webkit 等依赖由 apt 提供**，所以体积小 |
+| `CloudNProxy_x.y.z_amd64.AppImage` | Linux | ~78 MB | 便携版。把 WebKit / GTK 整套运行时打包进文件，拷到任意发行版直接运行，无需安装任何依赖 |
+| `cloudnproxy` | Linux | ~6.2 MB | 图形界面版裸二进制（要求系统已装 `libwebkit2gtk-4.1-0`） |
+| `t5d` | Linux | ~2.4 MB | 无 GUI 版裸二进制，**动态链接 glibc** |
+| `t5d-musl` | Linux | ~3 MB | 无 GUI 版**静态链接**，零动态依赖 |
+
+### 怎么选
+
+| 你的场景 | 选它 | 原因 |
+|---|---|---|
+| Windows 用户 | `...-setup.exe` | 有安装流程与卸载入口 |
+| Linux 桌面，要图形界面 | `.deb` | 体积最小，依赖交给系统包管理器 |
+| Linux 桌面，不想装东西 | `.AppImage` | `chmod +x` 后双击即用，代价是 78 MB |
+| **Linux 服务器 / 容器 / Alpine** | **`t5d-musl`** | 一个文件拷过去就能跑，不需要 glibc、不需要任何依赖 |
+| 发行版里已有 webkit | `t5d` / `cloudnproxy` | 直接运行，省去打包开销 |
+
+### `t5d` 与 `t5d-musl` 的区别
+
+两者是**同一个程序的两种编译方式**，功能、参数、配置文件完全一致，区别只在链接方式：
+
+| | `t5d`（动态链接 gnu/glibc） | `t5d-musl`（静态链接 musl） |
+|---|---|---|
+| `ldd` 结果 | 列出 `libc.so.6` 等一串依赖 | `not a dynamic executable` |
+| 能否跑在 Alpine / BusyBox | ✗（musl 与 glibc 不兼容） | ✓ |
+| 能否跑在老发行版（CentOS 7 等） | ✗ 常报 `GLIBC_2.xx not found` | ✓ |
+| DNS 行为 | 走 glibc NSS，查找链完整 | musl 自带 resolver，只读 `/etc/resolv.conf`（本项目节点解析以 DoH 为主，影响可忽略） |
+
+### 为什么 AppImage 比 deb 大 28 倍
+
+两者承诺不同：**deb** 只声明"我依赖 webkit2gtk"，库由系统提供；**AppImage** 承诺"拷到任何机器直接跑"，所以把整套图形栈塞进文件 —— `libjavascriptcoregtk`（JS 引擎）、`libwebkit2gtk`、GTK3 全家桶、ICU 数据、GStreamer 核心库等。这部分约占 78 MB 中的 90%+，本项目自己的代码只有约 6 MB。
+
+作为对照：Windows 端只有 1.9–4.9 MB，因为 Windows 11 系统自带 WebView2，不需要打包浏览器内核。
 
 ---
 
@@ -176,6 +220,12 @@ cargo test -p t5-daemon
 
 # 只编译无 GUI 版本
 cargo build --release -p t5-daemon      # 产物 target/release/t5d
+
+# 静态链接版（零动态依赖，可直接跑在 Alpine / BusyBox）
+# Ubuntu/Debian 还需先：sudo apt install musl-tools cmake nasm perl
+rustup target add x86_64-unknown-linux-musl
+cargo build --release --target x86_64-unknown-linux-musl -p t5-daemon
+# 产物 target/x86_64-unknown-linux-musl/release/t5d
 
 # 图形界面版：先生成图标
 node scripts/gen-icon.js icon-source.png

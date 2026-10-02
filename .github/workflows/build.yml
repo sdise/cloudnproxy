@@ -218,10 +218,104 @@ jobs:
             target/release/t5d
             target/release/t5d.exe
 
+  # 静态链接版本：一个文件拷到任何 x86_64 Linux 都能跑
+  musl:
+    name: 静态链接版本（musl）
+    needs: check
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: 安装 Rust 与 musl target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+
+      - name: Rust 缓存
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: musl
+
+      # ring 等加密库含汇编/C 代码，静态编译需要 musl-gcc 与相关工具
+      - name: 安装 musl 工具链
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools cmake nasm perl
+
+      - name: 构建
+        run: cargo build --release --target x86_64-unknown-linux-musl -p t5-daemon
+
+      - name: 验证零动态依赖
+        run: |
+          BIN=target/x86_64-unknown-linux-musl/release/t5d
+          file "$BIN"
+          if ldd "$BIN" 2>&1 | grep -q "not a dynamic executable"; then
+            echo "已确认零动态依赖"
+          else
+            echo "::error::仍存在动态依赖，静态链接未生效"
+            ldd "$BIN" || true
+            exit 1
+          fi
+
+      - name: 在 alpine 容器中验证可运行
+        run: |
+          set -o pipefail
+          mkdir -p /tmp/musl
+          cat > /tmp/musl/config.toml <<'EOF'
+          listen_host = "127.0.0.1"
+          listen_port = 11090
+          resolve_domain = "cloudnproxy.baidu.com"
+          upstream = "163.177.17.189:443"
+          fake_host = "cloudnproxy.baidu.com"
+          t5_auth = "1050504963"
+          log_level = "info"
+          log_file = ""
+          EOF
+
+          chmod +x target/x86_64-unknown-linux-musl/release/t5d
+          echo "alpine 版本：$(docker run --rm alpine:latest cat /etc/alpine-release)"
+
+          docker run -d --name t5d-musl --network host \
+            -v /tmp/musl/config.toml:/cfg/config.toml:ro \
+            -v "$PWD/target/x86_64-unknown-linux-musl/release/t5d:/t5d:ro" \
+            alpine:latest /t5d -f /cfg/config.toml -log info
+
+          ready=0
+          for i in $(seq 1 15); do
+            if (ss -ltn 2>/dev/null || netstat -ltn) | grep -q 11090; then
+              echo "端口在 ${i} 秒内就绪"
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+
+          echo "--- 容器日志 ---"
+          docker logs t5d-musl 2>&1 || true
+
+          if [ "$ready" -ne 1 ]; then
+            echo "::error::静态二进制在 alpine 中未能启动"
+            docker rm -f t5d-musl >/dev/null 2>&1 || true
+            exit 1
+          fi
+          echo "已确认静态二进制可在 musl libc 环境（alpine）中运行"
+          docker rm -f t5d-musl >/dev/null 2>&1 || true
+
+      - name: 改名以免与动态版重名
+        run: cp target/x86_64-unknown-linux-musl/release/t5d t5d-musl
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v5
+        with:
+          name: cloudnproxy-linux-musl
+          path: t5d-musl
+          if-no-files-found: error
+          retention-days: 14
+
   release:
     name: 发布 Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    needs: [build, musl]
     runs-on: ubuntu-22.04
     permissions:
       contents: write
