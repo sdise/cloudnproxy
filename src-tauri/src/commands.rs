@@ -10,7 +10,7 @@ use serde::Serialize;
 use std::path::PathBuf;
 use tauri::{AppHandle, State};
 use tauri_plugin_autostart::ManagerExt;
-use t5_core::{bench::BenchResult, Config, Controller, EngineStatus, LogLine, Node};
+use t5_core::{bench::BenchResult, Config, Controller, EngineStatus, LogLine, Node, UpdateInfo};
 
 /// `get_status` 的返回体：控制层状态 + 仅供桌面端使用的自启标记。
 #[derive(Serialize)]
@@ -78,8 +78,28 @@ pub async fn resolve_nodes(
 pub async fn benchmark_all(
     state: State<'_, Controller>,
     only_missing: Option<bool>,
+    auto_pick: Option<bool>,
 ) -> Result<usize, String> {
-    state.benchmark_all(only_missing.unwrap_or(false)).await
+    state
+        .benchmark_all(only_missing.unwrap_or(false), auto_pick.unwrap_or(false))
+        .await
+}
+
+/// 检查 GitHub 上是否有新版本。
+#[tauri::command]
+pub async fn check_update(state: State<'_, Controller>) -> Result<UpdateInfo, String> {
+    state.check_update().await
+}
+
+/// 在系统默认浏览器中打开链接。
+#[tauri::command]
+pub fn open_url(url: String) -> Result<(), String> {
+    let url = url.trim();
+    // 限定协议，避免这个入口被当成任意命令执行
+    if !url.starts_with("https://") && !url.starts_with("http://") {
+        return Err("仅支持 http/https 链接".into());
+    }
+    open_external(url)
 }
 
 #[tauri::command]
@@ -175,6 +195,35 @@ pub async fn open_config_dir(state: State<'_, Controller>) -> Result<(), String>
 #[tauri::command]
 pub async fn reset_data(state: State<'_, Controller>) -> Result<(), String> {
     state.reset_data().await;
+    Ok(())
+}
+
+/// 交给系统默认程序打开一个外部目标（链接）。
+fn open_external(target: &str) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        // 经 `cmd /C start` 转交给默认浏览器。必须抑制控制台窗口，
+        // 否则每次点「GitHub」都会闪一下黑框。
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", target])
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+            .map_err(|e| format!("打开链接失败：{e}"))?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(target)
+            .spawn()
+            .map_err(|e| format!("打开链接失败：{e}"))?;
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    {
+        let _ = target;
+        return Err("当前平台不支持打开链接".into());
+    }
     Ok(())
 }
 

@@ -296,8 +296,16 @@ async fn dispatch(app: &WebApp, cmd: &str, args: Value) -> Result<Value, String>
                 .get("onlyMissing")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
-            Ok(json!(ctrl.benchmark_all(only_missing).await?))
+            let auto_pick = args
+                .get("autoPick")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            Ok(json!(ctrl.benchmark_all(only_missing, auto_pick).await?))
         }
+        "check_update" => json_of!(ctrl.check_update().await?),
+        // 控制台跑在服务器上，「在浏览器中打开」应当由访问者自己的浏览器完成，
+        // 前端在 Web 模式下改用 window.open，不走这里
+        "open_url" => Err("Web 控制台请直接复制链接到浏览器访问".to_string()),
         "benchmark_one" => {
             let ip = require_str(&args, "ip")?;
             let port = opt_u16(&args, "port").unwrap_or(443);

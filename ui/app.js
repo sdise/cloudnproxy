@@ -137,6 +137,7 @@
     sort: { key: 'speed', asc: false },
     filterIsp: '',
     bench: false,
+    benchIp: '',
     follow: true,
     page: 'overview',
   };
@@ -312,7 +313,12 @@
     $('sbState').textContent = running ? '运行中' : '已停止';
     $('sbNode').textContent = '节点 ' + upstream + (chain && chain !== '直连' ? '（经 ' + chain + '）' : ' · 直连');
 
+    // 链路拓扑随 Chain 开关变化：启用时才在 SOCKS5 与 T5 节点之间插入一级代理
+    const hasChain = !!(chain && chain !== '直连');
     $('chainLocal').textContent = addr;
+    $('chainProxyBox').hidden = !hasChain;
+    $('chainArrow').hidden = !hasChain;
+    $('chainProxy').textContent = hasChain ? chain : '';
     $('chainNode').textContent = upstream;
 
     // 出站路径：到节点的流量是否被 TUN 类网卡接管
@@ -376,8 +382,9 @@
     body.innerHTML = list.map((n) => {
       const addr = n.ip + ':' + (n.port || 443);
       const isCur = addr === curAddr;
+      const isBench = S.benchIp === n.ip;
       const exit = [n.exit_isp, n.exit_asn].filter(Boolean).join(' · ');
-      return `<tr class="${isCur ? 'cur' : ''}">
+      return `<tr class="${isCur ? 'cur' : ''}${isBench ? ' bench' : ''}">
         <td class="num">${esc(n.ip)}</td>
         <td>${esc(n.region) || '—'}</td>
         <td>${esc(n.entry_isp) || '—'}</td>
@@ -520,19 +527,26 @@
     $('btnBenchStop').disabled = !S.bench;
   }
 
-  async function benchAll() {
+  async function benchAll(autoPick) {
     if (S.bench) { toast('测速已在进行中'); return; }
     try {
-      const total = await invoke('benchmark_all', { onlyMissing: false });
+      const total = await invoke('benchmark_all', {
+        onlyMissing: false,
+        autoPick: !!autoPick,
+      });
       S.bench = true;
       updateBenchButtons();
-      toast('开始测速，共 ' + total + ' 个节点');
+      toast(autoPick
+        ? `开始测速，结束后自动选优（共 ${total} 个节点）`
+        : `开始测速，共 ${total} 个节点`);
     } catch (e) {
       toast('无法开始测速：' + e);
     }
   }
 
   function onBenchProgress(p) {
+    // 这个节点已经测完，撤掉高亮
+    S.benchIp = '';
     if (S.cfg && S.cfg.nodes) {
       const n = S.cfg.nodes.find((x) => x.ip === p.ip);
       if (n && p.result) {
@@ -552,6 +566,9 @@
   }
 
   async function benchOne(ip, port) {
+    if (S.bench) { toast('正在批量测速，请等本轮结束'); return; }
+    S.benchIp = ip;
+    renderNodes();
     toast('正在测速 ' + ip + ' …');
     try {
       const r = await invoke('benchmark_one', { ip, port: Number(port) });
@@ -568,12 +585,14 @@
           exit_asn: r.exit_asn,
         });
       }
-      renderNodes();
       toast(r.speed_mbps != null
         ? `${ip} → ${r.speed_mbps.toFixed(2)} Mbps / ${r.latency_ms} ms`
         : `${ip} → 失败：${r.error || '无数据'}`);
     } catch (e) {
       toast('测速失败：' + e);
+    } finally {
+      S.benchIp = '';
+      renderNodes();
     }
   }
 
@@ -657,6 +676,9 @@
         toast('已重置');
       } catch (e) { toast('重置失败：' + e); }
     });
+
+    $('btnCheckUpdate').addEventListener('click', checkUpdate);
+    $('btnGithub').addEventListener('click', () => openUrl(REPO_URL));
 
     $('themeSel').addEventListener('change', () => applyTheme($('themeSel').value));
     $('filterIsp').addEventListener('change', (e) => { S.filterIsp = e.target.value; renderNodes(); });
@@ -774,9 +796,14 @@
       if (S.logs.length > 3000) S.logs.shift();
       if (S.page === 'logs') renderLogs();
     });
+    await listen('bench-started', (e) => {
+      S.benchIp = e.payload.ip;
+      renderNodes();
+    });
     await listen('bench-progress', (e) => onBenchProgress(e.payload));
     await listen('bench-done', () => {
       S.bench = false;
+      S.benchIp = '';
       updateBenchButtons();
       $('chartHint').textContent = '最近 60 秒';
       renderNodes();
@@ -796,7 +823,8 @@
       } catch (err) { /* 忽略 */ }
     });
     await listen('tray-toggle', togglePower);
-    await listen('tray-bench', benchAll);
+    // 托盘的「测速并自动选优」：测完自动把评分最高的节点设为当前节点
+    await listen('tray-bench', () => benchAll(true));
     await listen('tray-copy', copySocks);
 
     // Web 控制台用 SSE 接收推送；处理器已注册完毕，此处才建立连接
@@ -898,6 +926,58 @@
     if (logoutRow) logoutRow.hidden = false;
     const tip = document.querySelector('.swtip');
     if (tip) tip.innerHTML = '关闭浏览器<br>不影响代理运行';
+  }
+
+  /* ---------------- 版本更新 ---------------- */
+
+  const REPO_URL = 'https://github.com/sdise/cloudnproxy';
+  let updateBusy = false;
+
+  async function checkUpdate() {
+    if (updateBusy) return;
+    updateBusy = true;
+    const btn = $('btnCheckUpdate');
+    const desc = $('updateDesc');
+    btn.disabled = true;
+    desc.textContent = '正在检查…';
+
+    try {
+      const info = await invoke('check_update');
+      if (info.has_update) {
+        desc.innerHTML =
+          `发现新版本 <b>${esc(info.latest)}</b>（当前 v${esc(info.current)}）· ` +
+          `<a href="#" id="updateLink">前往下载</a>`;
+        const link = $('updateLink');
+        if (link) {
+          link.addEventListener('click', (ev) => {
+            ev.preventDefault();
+            openUrl(info.url);
+          });
+        }
+        toast('有新版本 ' + info.latest);
+      } else {
+        desc.textContent = `已是最新版本（v${info.current}）`;
+      }
+    } catch (e) {
+      desc.textContent = '检查失败：' + (e && e.message ? e.message : e);
+    } finally {
+      btn.disabled = false;
+      updateBusy = false;
+    }
+  }
+
+  /**
+   * 在浏览器中打开链接。
+   *
+   * 桌面版必须交给系统 —— WebView 内直接 window.open 可能被拦截；Web 控制台
+   * 则相反：程序跑在服务器上，只有访问者自己的浏览器才谈得上「打开」。
+   */
+  function openUrl(url) {
+    if (isTauri) {
+      invoke('open_url', { url }).catch((e) => toast('打开失败：' + e));
+    } else {
+      window.open(url, '_blank', 'noopener');
+    }
   }
 
   /* ---------------- 启动 ---------------- */
@@ -1055,6 +1135,15 @@
         demoCfg.egress_interface = args.iface;
         return null;
       case 'is_autostart_enabled': return false;
+      case 'check_update':
+        return {
+          has_update: true,
+          current: '0.2.1',
+          latest: 'v0.3.0',
+          url: 'https://github.com/sdise/cloudnproxy/releases',
+          published_at: '',
+          notes: '',
+        };
       case 'benchmark_all': return demoCfg.nodes.length;
       case 'benchmark_one': return { latency_ms: 30, speed_mbps: 88.8, bytes: 0, region: '广州', entry_isp: '联通', exit_ip: '14.215.185.28', exit_region: '广州', exit_isp: '电信', exit_asn: 'AS4134' };
       default: return null;

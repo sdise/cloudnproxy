@@ -102,24 +102,9 @@ impl Ctx {
     }
 }
 
-/// 选取评分最高的可用节点：速度优先，其次是延迟。
+/// 选取评分最高的可用节点（实现见 [`crate::config::pick_best`]）。
 fn pick_best(nodes: &[Node], current: &str) -> Option<String> {
-    let mut best: Option<(&Node, f64)> = None;
-    for n in nodes {
-        let addr = n.addr();
-        if addr == current {
-            continue;
-        }
-        if n.latency_ms.is_none() && n.speed_mbps.is_none() {
-            continue;
-        }
-        let score = n.speed_mbps.unwrap_or(0.0) * 1000.0
-            - n.latency_ms.unwrap_or(9_999) as f64;
-        if best.map(|(_, s)| score > s).unwrap_or(true) {
-            best = Some((n, score));
-        }
-    }
-    best.map(|(n, _)| n.addr())
+    crate::config::pick_best(nodes, Some(current))
 }
 
 pub struct EngineHandle {

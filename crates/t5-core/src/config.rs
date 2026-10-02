@@ -153,6 +153,35 @@ impl WebConfig {
     }
 }
 
+/// 从节点库中选出评分最高的可用节点，返回 `ip:port`。
+///
+/// 评分规则：**速度优先、延迟次之**。速度是 Mbps 量级（几十到几百），延迟是
+/// 毫秒量级（几十），乘 1000 让速度主导，延迟只作同速时的次要因素。
+///
+/// `exclude` 用于排除某个地址：自动故障切换的场景下选回自己毫无意义，所以传
+/// `Some(当前节点)`；而「测速后自动选优」允许当前节点就是最优，传 `None`。
+///
+/// 没有任何已测速的节点时返回 `None`。
+pub fn pick_best(nodes: &[Node], exclude: Option<&str>) -> Option<String> {
+    let mut best: Option<(&Node, f64)> = None;
+    for n in nodes {
+        let addr = n.addr();
+        if exclude == Some(addr.as_str()) {
+            continue;
+        }
+        // 没测过速的节点不参与评分，避免把「未知」当成「最好」
+        if n.latency_ms.is_none() && n.speed_mbps.is_none() {
+            continue;
+        }
+        let score =
+            n.speed_mbps.unwrap_or(0.0) * 1000.0 - n.latency_ms.unwrap_or(9_999) as f64;
+        if best.map(|(_, s)| score > s).unwrap_or(true) {
+            best = Some((n, score));
+        }
+    }
+    best.map(|(n, _)| n.addr())
+}
+
 /// 应用全部可配置项。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]

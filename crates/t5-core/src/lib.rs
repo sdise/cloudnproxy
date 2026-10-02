@@ -31,7 +31,7 @@ pub mod temp_proxy;
 pub mod tunnel_pool;
 
 pub use config::{Config, Node, WebConfig};
-pub use control::{Controller, StatusPayload};
+pub use control::{Controller, StatusPayload, UpdateInfo};
 pub use engine::{EngineHandle, EngineStatus};
 pub use events::{Event, EventBus};
 pub use logbuf::{LogLine, LogSink};

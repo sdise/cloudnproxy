@@ -101,7 +101,9 @@
             <div class="nodebox"><b>本地应用</b><span>SOCKS5 客户端</span></div>
             <span class="arrow">→</span>
             <div class="nodebox"><b id="chainLocal">127.0.0.1:10801</b><span>SOCKS5 Inbound</span></div>
-            <span class="arrow" id="chainArrow">→</span>
+            <span class="arrow" id="chainArrow" hidden>→</span>
+            <div class="nodebox" id="chainProxyBox" hidden><b id="chainProxy">—</b><span>一级代理 Chain</span></div>
+            <span class="arrow">→</span>
             <div class="nodebox" id="chainBox"><b id="chainNode">—</b><span>T5 节点</span></div>
             <span class="arrow">→</span>
             <div class="nodebox"><b>目标站点</b><span>任意 TCP</span></div>
@@ -187,9 +189,9 @@
         <div class="card">
           <h3>转发行为</h3>
           <div class="row"><div><div class="lbl">TCP_NODELAY</div><div class="desc">关闭 Nagle，降低交互延迟</div></div><div class="sw" data-bind="tcp_nodelay"></div></div>
-          <div class="row"><div><div class="lbl">按目标闲置隧道复用</div><div class="desc">预留开关，当前版本尚未生效</div></div><div class="sw" data-bind="tunnel_pool"></div></div>
-          <div class="row"><div><div class="lbl">断线自动重连</div><div class="desc">预留开关，当前版本尚未生效</div></div><div class="sw" data-bind="auto_reconnect"></div></div>
-          <div class="row"><div><div class="lbl">自动切换到最优节点</div><div class="desc">预留开关，当前版本尚未生效</div></div><div class="sw" data-bind="auto_switch"></div></div>
+          <div class="row"><div><div class="lbl">按目标闲置隧道复用</div><div class="desc">为同一目标预留一条备用隧道，下次连接直接复用，省掉一次握手往返（只缓存未传数据的干净隧道）</div></div><div class="sw" data-bind="tunnel_pool"></div></div>
+          <div class="row"><div><div class="lbl">断线自动重连</div><div class="desc">上游建立失败时按 300ms / 600ms 退避重试，最多 3 次</div></div><div class="sw" data-bind="auto_reconnect"></div></div>
+          <div class="row"><div><div class="lbl">自动切换到最优节点</div><div class="desc">上游连续失败 3 次后，自动改选已测速节点中评分最高者（速度优先、延迟次之）</div></div><div class="sw" data-bind="auto_switch"></div></div>
         </div>
 
         <div class="actions">
@@ -248,6 +250,19 @@
         <div class="card">
           <h3>关于</h3>
           <div class="row"><div><div class="lbl">当前版本</div><div class="desc" id="aboutVer">—</div></div></div>
+          <div class="row">
+            <div><div class="lbl">版本更新</div>
+              <div class="desc" id="updateDesc">检查 GitHub 上是否有新版本</div></div>
+            <div class="btn-group">
+              <button class="btn sm" id="btnCheckUpdate">检查更新</button>
+              <button class="btn sm btn-icon" id="btnGithub" title="在浏览器中打开 GitHub 仓库"
+                      aria-label="GitHub 仓库">
+                <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                  <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/>
+                </svg>
+              </button>
+            </div>
+          </div>
           <div class="row" id="rowLogout" hidden><div><div class="lbl">退出登录</div>
             <div class="desc">清除本机保存的登录令牌，需重新输入密码</div></div>
             <button class="btn sm" id="btnLogout">退出</button></div>

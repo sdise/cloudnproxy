@@ -9,11 +9,11 @@
 use crate::bench::BenchResult;
 use crate::config::{Config, Node};
 use crate::engine::{EngineHandle, EngineStatus};
-use crate::events::{BenchDone, BenchProgress, Event, EventBus, StatsTick};
+use crate::events::{BenchDone, BenchProgress, BenchStarted, Event, EventBus, StatsTick};
 use crate::logbuf::{self, LogLine, LogSink};
 use crate::netinfo::{EgressInfo, InterfaceInfo};
 use crate::stats::{Stats, StatsSnapshot};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
@@ -328,7 +328,15 @@ impl Controller {
     // ---------------- 测速 ----------------
 
     /// 启动整批测速，立即返回待测节点数；进度通过事件推送。
-    pub async fn benchmark_all(&self, only_missing: bool) -> Result<usize, String> {
+    ///
+    /// `auto_pick` 为真时，全部测完后自动把评分最高的节点设为当前节点
+    /// —— 托盘菜单的「测速并自动选优」走这条路径。选优必须等全部测完，
+    /// 否则比较的是新旧混杂的评分。
+    pub async fn benchmark_all(
+        &self,
+        only_missing: bool,
+        auto_pick: bool,
+    ) -> Result<usize, String> {
         if self.bench_running.swap(true, Ordering::SeqCst) {
             return Err("测速正在进行中".into());
         }
@@ -345,6 +353,13 @@ impl Controller {
         tokio::spawn(async move {
             for (i, node) in pending.iter().enumerate() {
                 let addr = node.addr();
+                // 先通知界面高亮这一行，再开始可能耗时几十秒的下载
+                this.events.publish(Event::BenchStarted(BenchStarted {
+                    index: i + 1,
+                    total,
+                    ip: node.ip.clone(),
+                }));
+
                 let cfg = this.cfg.lock().await.clone();
                 let res = crate::bench::benchmark(&cfg, &addr, &this.client).await;
 
@@ -369,6 +384,11 @@ impl Controller {
                 }
             }
 
+            // 选优放在全部测完之后：此时每个节点才都有最新评分
+            if auto_pick {
+                this.pick_and_apply_best().await;
+            }
+
             this.bench_running.store(false, Ordering::SeqCst);
             this.events.publish(Event::BenchDone(BenchDone { total }));
             this.logs.info("全部测速完成");
@@ -379,6 +399,12 @@ impl Controller {
 
     /// 单个节点测速，并把结果写回配置。
     pub async fn benchmark_one(&self, ip: &str, port: u16) -> BenchResult {
+        self.events.publish(Event::BenchStarted(BenchStarted {
+            index: 1,
+            total: 1,
+            ip: ip.to_string(),
+        }));
+
         let cfg = self.cfg.lock().await.clone();
         let addr = format!("{ip}:{port}");
         let res = crate::bench::benchmark(&cfg, &addr, &self.client).await;
@@ -417,6 +443,42 @@ impl Controller {
             n.measured_at = Some(logbuf::now_secs());
         }
         let _ = c.save(self.config_path.as_path());
+    }
+
+    /// 把评分最高的节点设为当前节点，返回是否完成处理。
+    ///
+    /// 与故障切换不同，这里**允许选中的就是当前节点** —— 如果它本来就是最快的，
+    /// 保持不动才是正确结果。
+    async fn pick_and_apply_best(&self) -> bool {
+        let best = {
+            let cfg = self.cfg.lock().await;
+            crate::config::pick_best(&cfg.nodes, None)
+        };
+
+        let Some(addr) = best else {
+            self.logs.warn("没有已测速的可用节点，跳过自动选优");
+            return false;
+        };
+
+        let current = self.cfg.lock().await.upstream_addr();
+        if addr == current {
+            self.logs.info(format!("{addr} 已是最优节点，保持不变"));
+            return true;
+        }
+
+        self.logs.info(format!("自动选优：{current} → {addr}"));
+        match addr.rsplit_once(':') {
+            Some((ip, port)) => {
+                let port = port.parse::<u16>().unwrap_or(443);
+                // 切换失败不应影响测速流程的收尾，记录后返回即可
+                if let Err(e) = self.set_current_node(ip, port).await {
+                    self.logs.warn(format!("自动切换节点失败：{e}"));
+                    return false;
+                }
+                true
+            }
+            None => false,
+        }
     }
 
     // ---------------- 测速链接 ----------------
@@ -510,6 +572,43 @@ impl Controller {
         Ok(())
     }
 
+    // ---------------- 版本更新 ----------------
+
+    /// 查询 GitHub 上的最新 Release 并与当前版本比较。
+    ///
+    /// 未认证调用有速率限制（每小时 60 次/IP），对本用途足够。
+    pub async fn check_update(&self) -> Result<UpdateInfo, String> {
+        let resp = self
+            .client
+            .get(RELEASES_API)
+            .header("Accept", "application/vnd.github+json")
+            .send()
+            .await
+            .map_err(|e| format!("无法连接 GitHub：{e}"))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(format!("GitHub 返回 HTTP {status}"));
+        }
+
+        let release: Release = resp
+            .json()
+            .await
+            .map_err(|e| format!("响应解析失败：{e}"))?;
+
+        let current = crate::VERSION.to_string();
+        let latest_ver = release.tag_name.trim_start_matches('v').to_string();
+
+        Ok(UpdateInfo {
+            has_update: version_tuple(&latest_ver) > version_tuple(&current),
+            current,
+            latest: release.tag_name,
+            url: release.html_url,
+            published_at: release.published_at,
+            notes: release.body,
+        })
+    }
+
     // ---------------- 推送 ----------------
 
     /// 每秒一次统计推送的循环体，没有订阅者时不产生任何事件。
@@ -533,5 +632,80 @@ impl Controller {
                 }
             }
         }
+    }
+}
+
+/// 本仓库的 Release 接口。
+const RELEASES_API: &str = "https://api.github.com/repos/sdise/cloudnproxy/releases/latest";
+
+/// GitHub Release 中我们关心的字段。
+#[derive(Debug, Deserialize)]
+struct Release {
+    tag_name: String,
+    html_url: String,
+    #[serde(default)]
+    published_at: String,
+    #[serde(default)]
+    body: String,
+}
+
+/// `check_update` 的返回体。
+#[derive(Debug, Clone, Serialize)]
+pub struct UpdateInfo {
+    /// 是否存在比当前更新的版本
+    pub has_update: bool,
+    /// 当前版本，如 `0.2.1`
+    pub current: String,
+    /// 最新版本标签，如 `v0.3.0`
+    pub latest: String,
+    /// Release 页面地址
+    pub url: String,
+    /// 发布时间
+    pub published_at: String,
+    /// Release 说明（Markdown）
+    pub notes: String,
+}
+
+/// 把 `x.y.z` 解析成可比较的元组；非数字后缀（`1.2.3-beta`）会被截断。
+fn version_tuple(v: &str) -> (u32, u32, u32) {
+    let mut parts = v.trim().trim_start_matches('v').split('.');
+    let mut next = || {
+        parts
+            .next()
+            .map(|p| {
+                p.chars()
+                    .take_while(|c| c.is_ascii_digit())
+                    .collect::<String>()
+                    .parse::<u32>()
+                    .unwrap_or(0)
+            })
+            .unwrap_or(0)
+    };
+    // 必须分三次调用：同一个表达式里连用会触发多重可变借用
+    let major = next();
+    let minor = next();
+    let patch = next();
+    (major, minor, patch)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::version_tuple;
+
+    #[test]
+    fn parses_versions() {
+        assert_eq!(version_tuple("0.2.1"), (0, 2, 1));
+        assert_eq!(version_tuple("v1.10.3"), (1, 10, 3));
+        assert_eq!(version_tuple("2.0"), (2, 0, 0));
+        assert_eq!(version_tuple("bad"), (0, 0, 0));
+        // 预发布后缀按主版本比较即可
+        assert_eq!(version_tuple("0.3.0-beta.1"), (0, 3, 0));
+    }
+
+    #[test]
+    fn version_ordering() {
+        assert!(version_tuple("0.10.0") > version_tuple("0.9.9"));
+        assert!(version_tuple("1.0.0") == version_tuple("1.0.0"));
+        assert!(version_tuple("0.2.1") > version_tuple("0.2.0"));
     }
 }

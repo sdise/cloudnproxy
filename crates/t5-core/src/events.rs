@@ -47,6 +47,16 @@ impl StatsTick {
     }
 }
 
+/// 开始测速某个节点。界面据此高亮「正在测速」的那一行 ——
+/// 批量测速是串行的，所以同一时刻最多只有一个。
+#[derive(Debug, Clone, Serialize)]
+pub struct BenchStarted {
+    /// 这是第几个（从 1 开始）
+    pub index: usize,
+    pub total: usize,
+    pub ip: String,
+}
+
 /// 单个节点测速完成。
 #[derive(Debug, Clone, Serialize)]
 pub struct BenchProgress {
@@ -71,6 +81,8 @@ pub enum Event {
     Stats(StatsTick),
     /// 一条日志
     Log(LogLine),
+    /// 开始测速某个节点
+    BenchStarted(BenchStarted),
     /// 批量测速的单个节点进度
     BenchProgress(BenchProgress),
     /// 批量测速结束
@@ -91,6 +103,7 @@ impl Event {
         match self {
             Event::Stats(_) => "stats",
             Event::Log(_) => "log",
+            Event::BenchStarted(_) => "bench-started",
             Event::BenchProgress(_) => "bench-progress",
             Event::BenchDone(_) => "bench-done",
             Event::NodesChanged(_) => "nodes-changed",

@@ -154,6 +154,8 @@ pub fn run() {
             commands::set_autostart,
             commands::open_config_dir,
             commands::reset_data,
+            commands::check_update,
+            commands::open_url,
         ])
         .run(tauri::generate_context!())
         .expect("CloudNProxy 启动失败");
