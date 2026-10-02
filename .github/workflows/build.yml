@@ -1,5 +1,11 @@
 name: build
 
+# 触发设计：让「验证」与「打包」各司其职，避免同一次提交被完整跑两遍。
+#   - 推送到 main、开 PR：只跑验证（check + smoke + gui-smoke，约 3 分钟），
+#     给日常开发快速反馈，不产出安装包；
+#   - 推送 v* 标签（或手动触发）：在上面之外，额外跑打包与发布。
+# 之所以 tag 时不跳过验证，是因为它成本低（约 3 分钟）而能兜住
+# 「标签指向的提交没在 main 上验证过」这种意外情况。
 on:
   push:
     branches: [main]
@@ -320,8 +326,11 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  # 打包只在打标签时进行：日常提交不需要安装包，每个平台重复打包一次纯属浪费。
+  # 手动触发时也允许，方便随时取产物。
   build:
     name: 构建 ${{ matrix.name }}
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     needs: [check, smoke, gui-smoke]
     strategy:
       fail-fast: false
@@ -386,9 +395,11 @@ jobs:
             target/release/t5d
             target/release/t5d.exe
 
-  # 静态链接版本：一个文件拷到任何 x86_64 Linux 都能跑
+  # 静态链接版本：一个文件拷到任何 x86_64 Linux 都能跑。
+  # 同样只在打标签时构建，理由见上面的 build。
   musl:
     name: 静态链接版本（musl）
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     needs: check
     runs-on: ubuntu-22.04
     steps:
