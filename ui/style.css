@@ -53,20 +53,6 @@ body {
 .dim { color: var(--muted); }
 .right { margin-left: auto; }
 
-/* ---------- 标题栏 ---------- */
-.titlebar {
-  height: 38px; flex-shrink: 0; display: flex; align-items: center;
-  padding: 0 14px; gap: 8px;
-  background: var(--surface2); border-bottom: 1px solid var(--border);
-}
-.tb-title { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text2); flex: 1; }
-.tb-title svg { width: 15px; height: 15px; }
-
-.pill { font-size: 10.5px; padding: 2px 9px; border-radius: 10px; font-weight: 600; }
-.pill.ok { background: var(--ok-bg); color: var(--ok); }
-.pill.err { background: var(--err-bg); color: var(--err); }
-.pill.mut { background: var(--surface3); color: var(--muted); }
-
 /* ---------- 主体 ---------- */
 .body { flex: 1; display: flex; overflow: hidden; }
 

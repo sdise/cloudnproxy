@@ -41,18 +41,6 @@
 
 <div class="app">
 
-  <!-- 标题栏 -->
-  <header class="titlebar">
-    <div class="tb-title">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-        <path d="M12 2 4 6v6c0 5 3.4 9.4 8 10 4.6-.6 8-5 8-10V6z"/><path d="M9 12l2 2 4-4"/>
-      </svg>
-      <span>CloudNProxy</span>
-      <span class="dim">— T5 云代理网关</span>
-    </div>
-    <div class="tb-stat"><span id="tbState" class="pill mut">已停止</span></div>
-  </header>
-
   <div class="body">
 
     <!-- 导航 -->
@@ -129,7 +117,6 @@
             <button class="btn primary" id="btnResolve">⟳ 解析域名</button>
           </div>
           <div class="toolbar">
-            <span class="dim">测速链接</span>
             <select id="speedUrlSel" style="max-width:360px"></select>
             <input id="speedUrlInput" class="grow" placeholder="自定义测速链接，例如 https://speed.cloudflare.com/__down?bytes=10000000">
             <button class="btn" id="btnAddSpeedUrl">＋ 添加</button>

@@ -308,10 +308,6 @@
       ? `本地 SOCKS5 <b>${esc(addr)}</b> · 当前节点 <b>${esc(upstream)}</b>`
       : '本地 SOCKS5 未运行';
 
-    const pill = $('tbState');
-    pill.textContent = running ? '运行中' : '已停止';
-    pill.className = 'pill ' + (running ? 'ok' : 'mut');
-
     $('sbDot').classList.toggle('off', !running);
     $('sbState').textContent = running ? '运行中' : '已停止';
     $('sbNode').textContent = '节点 ' + upstream + (chain && chain !== '直连' ? '（经 ' + chain + '）' : ' · 直连');

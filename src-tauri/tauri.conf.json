@@ -12,9 +12,9 @@
       {
         "label": "main",
         "title": "CloudNProxy — T5 云代理网关",
-        "width": 1040,
+        "width": 1105,
         "height": 700,
-        "minWidth": 900,
+        "minWidth": 960,
         "minHeight": 600,
         "resizable": true,
         "center": true,

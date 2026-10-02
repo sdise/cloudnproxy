@@ -258,6 +258,29 @@ impl BindingTarget for tokio::net::TcpSocket {
     }
 }
 
+/// 构造执行系统命令的 `Command`。
+///
+/// Windows 会为控制台程序（`powershell` 等）新建一个控制台窗口 —— 在图形界面
+/// 版本里表现为每做一次网卡探测就闪一下黑框。而「刷新」、「测速」、「设为当前」
+/// 乃至状态刷新都会触发探测，所以必须抑制。
+///
+/// 注意 `CREATE_NO_WINDOW` 只影响控制台窗口的分配，不影响 `.output()` 的管道
+/// 重定向，标准输出依旧能正常捕获。Linux 无此问题，直接返回普通 `Command`。
+fn system_command(program: &str) -> std::process::Command {
+    #[allow(unused_mut)]
+    let mut cmd = std::process::Command::new(program);
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        // CREATE_NO_WINDOW = 0x08000000：不为子进程分配控制台
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    cmd
+}
+
 // ---------------- Linux ----------------
 
 #[cfg(target_os = "linux")]
@@ -293,7 +316,7 @@ fn setsockopt_bind_device(fd: std::os::unix::io::RawFd, name: &str) -> std::io::
 
 #[cfg(target_os = "linux")]
 fn route_interface(ip: &str) -> Option<String> {
-    let out = std::process::Command::new("ip")
+    let out = system_command("ip")
         .args(["route", "get", ip])
         .output()
         .ok()?;
@@ -315,7 +338,7 @@ fn list_linux() -> Vec<InterfaceInfo> {
     // ip -br -4 addr show
     // lo               UNKNOWN        127.0.0.1/8
     // eth0             UP             192.168.1.5/24
-    let out = match std::process::Command::new("ip")
+    let out = match system_command("ip")
         .args(["-br", "-4", "addr", "show"])
         .output()
     {
@@ -404,7 +427,7 @@ fn route_interface(ip: &str) -> Option<String> {
         "(Find-NetRoute -RemoteIPAddress {ip} -ErrorAction SilentlyContinue | \
          Select-Object -First 1).InterfaceAlias"
     );
-    let out = std::process::Command::new("powershell")
+    let out = system_command("powershell")
         .args(["-NoProfile", "-NonInteractive", "-Command", &script])
         .output()
         .ok()?;
@@ -425,7 +448,7 @@ fn list_windows() -> Vec<InterfaceInfo> {
 $ip=(Get-NetIPAddress -InterfaceIndex $a.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Select-Object -First 1).IPAddress; \
 \"$($a.Name)`t$($a.ifIndex)`t$($a.Status)`t$($a.InterfaceDescription)`t$ip`t$($a.Virtual)`t$($a.NdisMedium)`t$($a.MediaType)`t$($a.PhysicalMediaType)\" }";
 
-    let out = match std::process::Command::new("powershell")
+    let out = match system_command("powershell")
         .args(["-NoProfile", "-NonInteractive", "-Command", script])
         .output()
     {
